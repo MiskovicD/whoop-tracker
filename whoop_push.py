@@ -60,7 +60,10 @@ def _req(url, data=None, headers=None, method=None):
             return json.loads(txt) if txt else None
     except urllib.error.HTTPError as e:
         detail = e.read().decode()[:300]
-        raise RuntimeError("Supabase %s: %s" % (e.code, detail))
+        err = RuntimeError("Supabase %s: %s" % (e.code, detail))
+        err.code = e.code
+        err.detail = detail
+        raise err from None          # geen dubbele traceback voor een gewone foutmelding
 
 
 def save_state(s):
@@ -71,18 +74,47 @@ def save_state(s):
     os.chmod(STATE, stat.S_IRUSR | stat.S_IWUSR)      # alleen jij mag erbij
 
 
-def login():
-    """Vraagt e-mail en wachtwoord lokaal; bewaart alleen de refresh-token."""
-    print("Eenmalig inloggen op Supabase (zelfde account als je andere apps).")
-    email = input("  e-mail: ").strip()
-    pw = getpass.getpass("  wachtwoord: ")
-    d = _req(SB_URL + "/auth/v1/token?grant_type=password",
-             {"email": email, "password": pw})
-    s = {"refresh_token": d["refresh_token"], "access_token": d["access_token"],
-         "user_id": d["user"]["id"]}
-    save_state(s)
-    print("  ingelogd, refresh-token bewaard in %s\n" % STATE)
-    return s
+PROJECT = SB_URL.split("//")[1].split(".")[0]
+DASHBOARD = "https://supabase.com/dashboard/project/%s/auth/users" % PROJECT
+
+
+def login(pogingen=3):
+    """
+    Vraagt e-mail en wachtwoord lokaal; bewaart alleen de refresh-token.
+
+    Let op: dit is NIET je supabase.com-login (die via GitHub gaat), maar een
+    gebruiker binnen dit project - hetzelfde account als in je andere apps.
+    """
+    print("Eenmalig inloggen op Supabase.")
+    print("Let op: niet je supabase.com-account, maar de gebruiker uit je")
+    print("uren- en finance-app (e-mail + wachtwoord).\n")
+
+    for poging in range(1, pogingen + 1):
+        email = input("  e-mail: ").strip()
+        pw = getpass.getpass("  wachtwoord: ")
+        try:
+            d = _req(SB_URL + "/auth/v1/token?grant_type=password",
+                     {"email": email, "password": pw})
+        except RuntimeError as e:
+            if getattr(e, "code", None) == 400 and "invalid" in getattr(e, "detail", "").lower():
+                rest = pogingen - poging
+                print("\n  Wachtwoord klopt niet, of dit account bestaat nog niet"
+                      " in dit project.")
+                if rest:
+                    print("  Nog %d poging%s.\n" % (rest, "en" if rest > 1 else ""))
+                    continue
+                print("\n  Controleer of de gebruiker bestaat, of zet een nieuw wachtwoord:")
+                print("  %s\n" % DASHBOARD)
+                print("  Daar log je wel met GitHub in. Bestaat er nog geen gebruiker,")
+                print("  maak er dan een aan met 'Add user'.")
+                sys.exit(1)
+            raise
+
+        s = {"refresh_token": d["refresh_token"], "access_token": d["access_token"],
+             "user_id": d["user"]["id"]}
+        save_state(s)
+        print("\n  ingelogd, refresh-token bewaard in %s\n" % STATE)
+        return s
 
 
 def session():
@@ -144,7 +176,8 @@ def curve(hr, n=CURVE_POINTS):
     return out
 
 
-def build_row(day, recs, user_id, hrmax, sex, trimp_ref, baseline, data_hello=None):
+def build_row(day, recs, user_id, hrmax, sex, trimp_ref, baseline,
+              data_hello=None, battery=None):
     sr = series(recs)
     hr = sr["hr"]
     if not hr:
@@ -163,7 +196,9 @@ def build_row(day, recs, user_id, hrmax, sex, trimp_ref, baseline, data_hello=No
         "hr_avg": round(sum(vals) / len(vals), 1),
         "hr_min": min(vals), "hr_max": max(vals), "rhr": round(rhr, 1),
         "worn_min": int(len(hr) / 60),
-        "battery": (data_hello or {}).get("battery"),
+        # 0x2A19 wint van de hello-waarde: die laatste sprong binnen tien
+        # minuten van 23,3 naar 31,3 procent zonder lader.
+        "battery": battery if battery is not None else (data_hello or {}).get("battery"),
         "trimp_edwards": round(ed, 2),
         "trimp_banister": round(ba, 2) if ba is not None else None,
         "strain21": round(M.strain21(ed, trimp_ref), 2),
@@ -200,6 +235,8 @@ def main():
     p.add_argument("--trimp-ref", type=float, default=300.0)
     p.add_argument("--all", action="store_true", help="alle dagen, niet alleen de laatste")
     p.add_argument("--dry-run", action="store_true", help="toon wat er verstuurd zou worden")
+    p.add_argument("--battery", type=float, default=None,
+                   help="accustand uit 0x2A19; overschrijft de onbetrouwbare hello-waarde")
     a = p.parse_args()
 
     if a.hrmax:
@@ -226,7 +263,8 @@ def main():
     rows = []
     for d in wanted:
         row = build_row(d, days[d], uid, hrmax, a.sex, a.trimp_ref, baseline,
-                        data.get("hello"))
+                        data.get("hello"),
+                        battery=a.battery if d == max(days) else None)
         if row is None:
             print("  %s  overgeslagen (geen hartslag)" % d)
             continue
