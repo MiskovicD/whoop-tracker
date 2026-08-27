@@ -1,10 +1,17 @@
 /* Service worker voor Whoop lokaal.
-   Cachet alleen de app-bestanden zelf, zodat hij opent zonder internet.
-   Je metrics komen live uit Supabase en worden bewust niet gecachet -
-   verouderde gezondheidsdata tonen is erger dan even niets tonen.
 
-   Let op: verhoog CACHE bij elke wijziging, anders blijft de oude versie hangen. */
-const CACHE = "whoop-lokaal-v5";
+   Strategie, en waarom:
+   - De HTML gaat NETWERK-EERST. Cache-first op het document betekent dat de
+     app altijd één versie achterloopt: je pusht een fix en je telefoon blijft
+     de oude tonen. Netwerk-eerst met cache als terugval geeft je de nieuwste
+     versie zodra je online bent, en werkt nog steeds offline.
+   - Iconen en manifest gaan CACHE-EERST. Die veranderen zelden en zijn groot
+     genoeg om niet elke keer opnieuw te willen halen.
+   - Supabase komt hier niet langs. Verouderde gezondheidsdata tonen is erger
+     dan even niets tonen.
+
+   CACHE ophogen blijft nodig bij wijzigingen aan de statische bestanden. */
+const CACHE = "whoop-lokaal-v6";
 const ASSETS = [
   "./",
   "./index.html",
@@ -27,10 +34,28 @@ self.addEventListener("activate", e => {
   );
 });
 
+function isDocument(req) {
+  return req.mode === "navigate" || (req.destination === "" && req.url.endsWith(".html"))
+      || req.destination === "document";
+}
+
 self.addEventListener("fetch", e => {
   const url = new URL(e.request.url);
-  if (url.origin !== location.origin) return;          // Supabase nooit uit cache
-  e.respondWith(
-    caches.match(e.request).then(hit => hit || fetch(e.request))
-  );
+  if (url.origin !== location.origin) return;         // Supabase nooit uit cache
+  if (e.request.method !== "GET") return;
+
+  if (isDocument(e.request)) {
+    e.respondWith(
+      fetch(e.request)
+        .then(res => {
+          const kopie = res.clone();
+          caches.open(CACHE).then(c => c.put(e.request, kopie)).catch(() => {});
+          return res;
+        })
+        .catch(() => caches.match(e.request).then(hit => hit || caches.match("./index.html")))
+    );
+    return;
+  }
+
+  e.respondWith(caches.match(e.request).then(hit => hit || fetch(e.request)));
 });
