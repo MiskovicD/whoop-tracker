@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from whoop_report import (load, sessions, series, rmssd, sdnn,
-                          fmt_dur, fmt_t, resting_hr)
+                          fmt_dur, fmt_t, resting_hr, laatste_met_hr)
 
 BASELINE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "baseline.json")
 MIN_BASELINE_DAYS = 7      # onder dit aantal is een z-score betekenisloos
@@ -357,7 +357,7 @@ def main():
     if not ses:
         sys.exit("geen records in de database")
 
-    recs = [r for s in ses for r in s] if a.all_sessions else ses[-1]
+    recs = [r for s in ses for r in s] if a.all_sessions else laatste_met_hr(ses)
     sr = series(recs)
     hr, motion = sr["hr"], sr["motion"]
     if not hr:

@@ -123,6 +123,18 @@ def sessions(records):
     return ses
 
 
+def laatste_met_hr(ses):
+    """
+    De nieuwste sessie is vaak een sync: honderden dataframes zonder één
+    hartslag, omdat er tijdens het leegtrekken niet live gemeten wordt.
+    Blind de laatste pakken levert dan een leeg rapport op.
+    """
+    for s in reversed(ses):
+        if any(isinstance(r["d"].get("hr"), (int, float)) and r["d"]["hr"] > 0 for r in s):
+            return s
+    return ses[-1] if ses else []
+
+
 def series(recs):
     """Trek de bruikbare tijdreeksen uit een sessie."""
     hr_by_sec = {}                # seconde -> (prioriteit, bpm); ontdubbelt
@@ -409,7 +421,7 @@ def build(data, db_path):
                  '</section>' % ("".join(rows), int(GAP)))
 
     # -- laatste sessie in detail
-    last = ses[-1]
+    last = laatste_met_hr(ses)
     sr = series(last)
     dur = last[-1]["t"] - last[0]["t"]
     parts.append('<section class="card"><h2>Laatste sessie <span class="badge">%s &middot; %s</span></h2>'
