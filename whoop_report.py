@@ -9,7 +9,9 @@ import argparse, json, math, os, sqlite3, struct, sys, html
 from datetime import datetime, timezone
 
 GAP = 120.0          # seconden stilte -> nieuwe sessie
-HIST_TYPE = 0x07     # recordtype van de 1 Hz-historie (zelfde indeling als R24)
+HIST_TYPES = (0x05, 0x07)   # 1 Hz-historie; beide dezelfde indeling als R24.
+                            # 0x07 en 0x05 komen door elkaar uit de flash, en wie
+                            # er maar één van pakt mist zomaar de helft van zijn dag.
 GSR_SENTINEL = 65000 # >= dit is 0xFFFF-achtig: geen huidcontact, geen meting
 RHR_WINDOW = 60      # rolling venster voor rusthartslag
 
@@ -41,7 +43,7 @@ def read_history(con):
             inner = bytes.fromhex(hx)[4:-4]          # kop van 4, CRC32 van 4
         except ValueError:
             continue
-        if len(inner) < 72 or inner[0] != 0x2F or inner[2] != HIST_TYPE:
+        if len(inner) < 72 or inner[0] != 0x2F or inner[2] not in HIST_TYPES:
             continue
         ts = struct.unpack_from("<I", inner, 7)[0]
         if not (1_500_000_000 < ts < 2_000_000_000):
@@ -50,7 +52,7 @@ def read_history(con):
         rr = [struct.unpack_from("<H", inner, 19 + 2 * i)[0] for i in range(min(n, 4))]
         rr = [v for v in rr if 300 <= v <= 2000]
         ax, ay, az = struct.unpack_from("<fff", inner, 36)
-        uit[ts] = {"kind": "hist", "hr": inner[17], "rr_ms": rr,
+        uit[ts] = {"kind": "hist", "rec_type": inner[2], "hr": inner[17], "rr_ms": rr,
                    "accel_g": [ax, ay, az], "skin_contact": inner[51],
                    "skin_temp_raw": struct.unpack_from("<H", inner, 68)[0],
                    "ts_epoch": ts}
