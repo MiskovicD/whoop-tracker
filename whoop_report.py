@@ -5,15 +5,58 @@ self-contained HTML-rapport. Alleen stdlib - geen pip install nodig.
 
     python3 whoop_report.py [pad/naar/whoop.db] [-o rapport.html]
 """
-import argparse, json, math, os, sqlite3, sys, html
+import argparse, json, math, os, sqlite3, struct, sys, html
 from datetime import datetime, timezone
 
 GAP = 120.0          # seconden stilte -> nieuwe sessie
+HIST_TYPE = 0x07     # recordtype van de 1 Hz-historie (zelfde indeling als R24)
 GSR_SENTINEL = 65000 # >= dit is 0xFFFF-achtig: geen huidcontact, geen meting
 RHR_WINDOW = 60      # rolling venster voor rusthartslag
 
 
 # ---------------------------------------------------------------- inlezen
+
+def read_history(con):
+    """
+    Leest de 1 Hz-historie uit de ruwe frames.
+
+    De research-client herkent recordtype 7 niet en bewaart die frames als
+    ongedecodeerde 'data'. De indeling blijkt identiek aan R24, geverifieerd
+    tegen live metingen: byte 17 gaf 624 van de 624 overlappende seconden
+    exact dezelfde hartslag, en de zwaartekrachtvector op offset 36 heeft een
+    lengte van 1,001 g.
+
+        [0]=0x2F pakkettype   [2]=0x07 recordtype
+        [7:11]  u32 unix-tijd    [17] hartslag    [18] aantal RR
+        [19:27] RR-intervallen (u16, ms)          [36:48] accel x/y/z (float g)
+        [51] contactkwaliteit 0-198               [68] huidtemp (relatief)
+    """
+    uit = {}
+    try:
+        rijen = con.execute("select hex from frames where packet_type=?", (0x2F,))
+    except sqlite3.Error:
+        return []
+    for (hx,) in rijen:
+        try:
+            inner = bytes.fromhex(hx)[4:-4]          # kop van 4, CRC32 van 4
+        except ValueError:
+            continue
+        if len(inner) < 72 or inner[0] != 0x2F or inner[2] != HIST_TYPE:
+            continue
+        ts = struct.unpack_from("<I", inner, 7)[0]
+        if not (1_500_000_000 < ts < 2_000_000_000):
+            continue
+        n = inner[18]
+        rr = [struct.unpack_from("<H", inner, 19 + 2 * i)[0] for i in range(min(n, 4))]
+        rr = [v for v in rr if 300 <= v <= 2000]
+        ax, ay, az = struct.unpack_from("<fff", inner, 36)
+        uit[ts] = {"kind": "hist", "hr": inner[17], "rr_ms": rr,
+                   "accel_g": [ax, ay, az], "skin_contact": inner[51],
+                   "skin_temp_raw": struct.unpack_from("<H", inner, 68)[0],
+                   "ts_epoch": ts}
+    return [{"t": float(ts), "kind": "hist", "ts": ts, "d": d}
+            for ts, d in sorted(uit.items())]
+
 
 def load(db_path):
     """Open read-only, zodat een lopende sync ons niet blokkeert."""
@@ -55,6 +98,11 @@ def load(db_path):
     except sqlite3.Error:
         pass
 
+    hist = read_history(con)
+    if hist:
+        out["records"] = sorted(out["records"] + hist, key=lambda r: r["t"])
+        out["history_n"] = len(hist)
+
     con.close()
     return out
 
@@ -77,6 +125,8 @@ def series(recs):
     """Trek de bruikbare tijdreeksen uit een sessie."""
     hr_by_sec = {}                # seconde -> (prioriteit, bpm); ontdubbelt
     gsr, motion, orient, rr = [], [], [], []
+    rr_per_sec = {}               # seconde -> RR-intervallen uit de historie
+    g_by_sec = {}                 # seconde -> zwaartekrachtvector uit de historie
     bad_gsr = [0]
     for r in recs:
         d, t = r["d"], r["ts"] or r["t"]
@@ -84,7 +134,7 @@ def series(recs):
         if isinstance(v, (int, float)) and v > 0:
             # realtime_hr is het toegewijde hartslagrecord; R10 draagt hem ook,
             # dus zonder deze voorkeur telt elke seconde dubbel.
-            prio = 0 if r["kind"] == "realtime_hr" else 1
+            prio = {"realtime_hr": 0, "hist": 1}.get(r["kind"], 2)
             sec = int(t)
             if sec not in hr_by_sec or prio < hr_by_sec[sec][0]:
                 hr_by_sec[sec] = (prio, float(v))
@@ -105,15 +155,49 @@ def series(recs):
             except (KeyError, TypeError, ValueError):
                 pass
 
+        a = d.get("accel_g")
+        if isinstance(a, list) and len(a) == 3:
+            g_by_sec[int(t)] = a
+
         for key in ("rr_intervals_ms", "rr_ms", "rr_raw"):
             v = d.get(key)
             if isinstance(v, list) and v:
-                rr.extend(float(x) for x in v if isinstance(x, (int, float)) and x > 0)
+                schoon = [float(x) for x in v if isinstance(x, (int, float)) and x > 0]
+                rr.extend(schoon)
+                if schoon:
+                    rr_per_sec.setdefault(int(t), []).extend(schoon)
                 break
 
     hr = [(float(sec), v) for sec, (_p, v) in sorted(hr_by_sec.items())]
+
+    # Beweging uit de historie: de band levert daar één zwaartekrachtvector per
+    # seconde, geen min/max zoals R10. De verandering tussen twee opeenvolgende
+    # seconden is dan de bruikbare activiteitsmaat.
+    if g_by_sec and not motion:
+        secs = sorted(g_by_sec)
+        for vorige, nu in zip(secs, secs[1:]):
+            if nu - vorige > 3:
+                continue
+            a, b = g_by_sec[vorige], g_by_sec[nu]
+            d3 = math.sqrt(sum((b[i] - a[i]) ** 2 for i in range(3)))
+            motion.append((float(nu), d3 * 1000.0))     # milli-g, leesbaarder
+
+    # RR-intervallen alleen aaneenrijgen binnen een ononderbroken reeks: over
+    # een gat heen is het verschil tussen twee intervallen betekenisloos, en
+    # dat blaast een RMSSD volledig op.
+    runs, huidig, vorige_sec = [], [], None
+    for sec in sorted(rr_per_sec):
+        if vorige_sec is not None and sec - vorige_sec > 2:
+            if len(huidig) > 1:
+                runs.append(huidig)
+            huidig = []
+        huidig.extend(rr_per_sec[sec])
+        vorige_sec = sec
+    if len(huidig) > 1:
+        runs.append(huidig)
+
     return {"hr": hr, "gsr": gsr, "motion": motion, "orient": orient, "rr": rr,
-            "gsr_dropped": bad_gsr[0]}
+            "rr_runs": runs, "gsr_dropped": bad_gsr[0]}
 
 
 def resting_hr(hr):

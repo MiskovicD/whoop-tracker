@@ -23,6 +23,7 @@ BASELINE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "baseline.js
 MIN_BASELINE_DAYS = 7      # onder dit aantal is een z-score betekenisloos
 MERGE_GAP = 30             # minuten: korte ontwaking breekt de nacht niet
 MIN_SLEEP_MIN = 45         # minder dan dit is geen slaapperiode
+MALIK = 0.20               # RR mag max 20% van zijn buur afwijken (artefactfilter)
 
 # Edwards-zones als fractie van HRmax, met hun gewicht
 ZONES = [(0.50, 0.60, 1), (0.60, 0.70, 2), (0.70, 0.80, 3),
@@ -83,20 +84,62 @@ def strain21(trimp, ref):
 
 # ------------------------------------------------------------------- HRV
 
-def hrv_metrics(rr):
-    """rr = lijst RR-intervallen in ms. Filtert fysiologisch onmogelijke waarden."""
+def hrv_metrics(rr, runs=None):
+    """
+    rr    = alle RR-intervallen in ms (voor SDNN en het gemiddelde)
+    runs  = lijst van aaneengesloten reeksen (voor RMSSD en pNN50)
+
+    RMSSD kijkt naar het verschil tussen opeenvolgende hartslagen. Reken je dat
+    over een gat heen - twee intervallen die minuten uit elkaar liggen - dan
+    krijg je een enorm verschil dat niets met variabiliteit te maken heeft.
+    Vandaar dat opeenvolgende maten alleen binnen een reeks worden bepaald.
+    """
     clean = [x for x in rr if 300 <= x <= 2000]
     dropped = len(rr) - len(clean)
     if len(clean) < 2:
         return None
-    r = rmssd(clean)
-    out = {"n": len(clean), "dropped": dropped, "rmssd": r, "sdnn": sdnn(clean),
-           "mean_rr": sum(clean) / len(clean),
-           "hr_from_rr": 60000.0 / (sum(clean) / len(clean)),
-           "ln_rmssd": math.log(r) if r and r > 0 else None}
-    nn50 = sum(1 for i in range(len(clean) - 1) if abs(clean[i + 1] - clean[i]) > 50)
-    out["pnn50"] = 100.0 * nn50 / (len(clean) - 1)
-    return out
+
+    # Artefactfilter (Malik): een optische meting mist soms een slag of telt er
+    # een dubbel. Zo'n interval wijkt dan tientallen procenten af van zijn buur.
+    # Ongefilterd geeft dat een RMSSD van honderden ms, wat fysiologisch niet
+    # kan - een rustwaarde ligt tussen 20 en 100 ms.
+    def filter_run(run):
+        r2 = [x for x in run if 300 <= x <= 2000]
+        if len(r2) < 2:
+            return []
+        uit, vorig = [r2[0]], r2[0]
+        for v in r2[1:]:
+            if abs(v - vorig) <= MALIK * vorig:
+                uit.append(v)
+                vorig = v
+            else:
+                uit.append(None)          # onderbreekt het paar, houdt de reeks
+                vorig = v
+        return uit
+
+    paren, verworpen, behouden = [], 0, []
+    bronnen = runs if runs else [clean]
+    for run in bronnen:
+        f = filter_run(run)
+        verworpen += sum(1 for x in f if x is None)
+        behouden += [x for x in f if x is not None]
+        for i in range(len(f) - 1):
+            if f[i] is not None and f[i + 1] is not None:
+                paren.append((f[i], f[i + 1]))
+
+    if len(paren) < 2:
+        return None
+    diffs = [b - a for a, b in paren]
+    r = math.sqrt(sum(d * d for d in diffs) / len(diffs))
+    nn50 = sum(1 for d in diffs if abs(d) > 50)
+
+    return {"n": len(clean), "dropped": dropped + verworpen, "pairs": len(paren),
+            "runs": len(runs) if runs else 1,
+            "rmssd": r, "sdnn": sdnn(behouden or clean),
+            "mean_rr": sum(behouden or clean) / len(behouden or clean),
+            "hr_from_rr": 60000.0 / (sum(behouden or clean) / len(behouden or clean)),
+            "ln_rmssd": math.log(r) if r > 0 else None,
+            "pnn50": 100.0 * nn50 / len(diffs)}
 
 
 # ------------------------------------------------------------------ slaap
@@ -361,12 +404,14 @@ def main():
 
     # -- HRV
     print("\n HRV")
-    h = hrv_metrics(sr["rr"])
+    h = hrv_metrics(sr["rr"], sr.get("rr_runs"))
     if h:
         print("   RMSSD  %6.1f ms      SDNN  %6.1f ms      pNN50  %4.1f %%"
               % (h["rmssd"], h["sdnn"], h["pnn50"]))
-        print("   ln(RMSSD) %5.2f       %d intervallen (%d verworpen)"
-              % (h["ln_rmssd"], h["n"], h["dropped"]))
+        print("   ln(RMSSD) %5.2f       %d intervallen in %d reeksen"
+              % (h["ln_rmssd"], h["n"], h["runs"]))
+        print("   %d bruikbare opeenvolgende paren, %d verworpen als artefact"
+              % (h["pairs"], h["dropped"]))
         out["hrv"] = h
     else:
         print("   geen RR-intervallen - die zitten in R25-records en komen")
