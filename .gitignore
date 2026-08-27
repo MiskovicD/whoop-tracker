@@ -1,0 +1,11 @@
+# Gegenereerde rapporten bevatten je eigen hartslag- en slaapdata.
+# Die horen niet in een openbare repo.
+whoop_report.html
+baseline.json
+
+# Ruwe opnames van de band
+*.db
+*.jsonl
+
+__pycache__/
+*.pyc
