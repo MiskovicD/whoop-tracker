@@ -4,7 +4,7 @@
    verouderde gezondheidsdata tonen is erger dan even niets tonen.
 
    Let op: verhoog CACHE bij elke wijziging, anders blijft de oude versie hangen. */
-const CACHE = "whoop-lokaal-v4";
+const CACHE = "whoop-lokaal-v5";
 const ASSETS = [
   "./",
   "./index.html",

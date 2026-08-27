@@ -180,8 +180,29 @@ async function api(path){
     {headers:{apikey:SB_ANON, Authorization:"Bearer "+session.access_token}});
   let res = await go();
   if(res.status === 401){ await refreshSession(); res = await go(); }
-  if(!res.ok) throw new Error("Serverfout ("+res.status+")");
+  if(!res.ok){
+    let msg = "";
+    try { const j = await res.json(); msg = j.message || j.hint || j.details || ""; }
+    catch(e){}
+    const err = new Error(msg || ("HTTP " + res.status));
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
+}
+
+function toonFout(e){
+  const mist = e.status === 404 && /whoop_days/.test(e.message || "");
+  $("#body").innerHTML = mist
+    ? `<div class="card"><h3>TABEL BESTAAT NOG NIET</h3>
+        <p style="color:var(--muted);font-size:14.5px;margin:0 0 12px">
+        De tabel <code>whoop_days</code> staat nog niet in je Supabase-project.
+        Open de SQL Editor en draai <code>supabase-schema.sql</code> uit
+        <code>whoop-tracker/</code>. Daarna hier op ververs tikken.</p>
+        <p class="note" style="margin:0">${e.message}</p></div>`
+    : `<div class="card"><h3>ER GING IETS MIS</h3>
+        <p style="color:var(--muted);font-size:14.5px;margin:0">${e.message}</p></div>`;
+  show("vApp");
 }
 
 /* ---------- ring ---------- */
@@ -371,8 +392,13 @@ async function boot(){
   show("vLoad");
   if(!session){ show("vLogin"); return; }
   try { await loadData(); }
-  catch(e){ try { await refreshSession(); await loadData(); }
-            catch(e2){ clearSession(); show("vLogin"); } }
+  catch(e){
+    // Alleen een auth-probleem rechtvaardigt uitloggen. Een ontbrekende tabel
+    // of een serverfout moet je zien, niet naar het inlogscherm terugsturen.
+    if(e.status && e.status !== 401 && e.status !== 403){ toonFout(e); return; }
+    try { await refreshSession(); await loadData(); }
+    catch(e2){ clearSession(); show("vLogin"); }
+  }
 }
 
 $("#loginForm").addEventListener("submit", async ev => {
@@ -384,7 +410,9 @@ $("#loginForm").addEventListener("submit", async ev => {
     if(!r.ok) throw new Error("Inloggen mislukt");
     const d = await r.json();
     saveSession({access_token:d.access_token, refresh_token:d.refresh_token, user_id:d.user.id});
-    $("#pw").value = ""; await loadData();
+    $("#pw").value = "";
+    try { await loadData(); }
+    catch(e2){ if(e2.status) toonFout(e2); else throw e2; }
   }catch(e){ $("#loginErr").textContent = e.message; }
 });
 
