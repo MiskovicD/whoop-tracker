@@ -215,16 +215,31 @@ def series(recs):
 
 
 def resting_hr(hr):
-    """Laagste voortschrijdend 60s-gemiddelde: een eerlijke RHR-proxy."""
-    if len(hr) < 5:
+    """
+    Laagste voortschrijdend 60s-gemiddelde: een eerlijke RHR-proxy.
+
+    Met twee wijzers in plaats van een geneste lus. De eerste versie scande
+    voor elk punt de hele reeks opnieuw; bij een dag aan 1 Hz-data zijn dat
+    miljarden bewerkingen en loopt het vast.
+    """
+    n = len(hr)
+    if n < 5:
         return None
-    best = None
-    for i in range(len(hr)):
-        win = [v for t, v in hr if hr[i][0] <= t < hr[i][0] + RHR_WINDOW]
-        if len(win) >= max(5, RHR_WINDOW // 3):
-            m = sum(win) / len(win)
+    minimaal = max(5, RHR_WINDOW // 3)
+    best, som, rechts = None, 0.0, 0
+    for links in range(n):
+        if rechts < links:
+            rechts, som = links, 0.0
+        grens = hr[links][0] + RHR_WINDOW
+        while rechts < n and hr[rechts][0] < grens:
+            som += hr[rechts][1]
+            rechts += 1
+        aantal = rechts - links
+        if aantal >= minimaal:
+            m = som / aantal
             if best is None or m < best:
                 best = m
+        som -= hr[links][1]
     return best if best is not None else min(v for _, v in hr)
 
 
@@ -257,8 +272,25 @@ def fmt_t(ts):
 
 # ---------------------------------------------------------------- tekenen
 
+MAX_PUNTEN = 1200    # meer punten dan beeldpunten heeft geen zin en blaast het bestand op
+
+
+def verdun(points, n=MAX_PUNTEN):
+    """Middelt de reeks uit tot hoogstens n punten, met behoud van de vorm."""
+    if len(points) <= n:
+        return points
+    stap = len(points) / float(n)
+    uit = []
+    for i in range(n):
+        blok = points[int(i * stap):max(int(i * stap) + 1, int((i + 1) * stap))]
+        if blok:
+            uit.append((blok[0][0], sum(v for _, v in blok) / len(blok)))
+    return uit
+
+
 def chart(points, unit="", color="var(--accent)", height=200, fill=True):
     """Inline SVG lijngrafiek. points = [(t, value)]."""
+    points = verdun(points)
     if len(points) < 2:
         return '<p class="empty">Te weinig datapunten om te tekenen.</p>'
 

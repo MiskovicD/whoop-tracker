@@ -24,6 +24,7 @@ MIN_BASELINE_DAYS = 7      # onder dit aantal is een z-score betekenisloos
 MERGE_GAP = 30             # minuten: korte ontwaking breekt de nacht niet
 MIN_SLEEP_MIN = 45         # minder dan dit is geen slaapperiode
 MALIK = 0.20               # RR mag max 20% van zijn buur afwijken (artefactfilter)
+HR_MARGE = 1.25            # terugvalgrens voor de hartslagpoort t.o.v. de rustwaarde
 
 # Edwards-zones als fractie van HRmax, met hun gewicht
 ZONES = [(0.50, 0.60, 1), (0.60, 0.70, 2), (0.70, 0.80, 3),
@@ -219,12 +220,22 @@ def detect_sleep(hr, motion, rhr):
     hr_min = {}
     for t, v in hr:
         hr_min.setdefault(int(t // 60), []).append(v)
-    gate = rhr * 1.10
+
+    # De hartslagpoort adaptief bepalen, net als de bewegingsdrempel. Een vaste
+    # marge boven de rusthartslag werkt niet: die rustwaarde is het minimum van
+    # de hele periode - je diepste slaapmoment - en de rest van de nacht ligt
+    # daar gewoon boven. Met rhr*1.10 viel 87% van een echte nacht af.
+    minuut_hr = {m: sum(v) / len(v) for m, v in hr_min.items()}
+    hr_thr, hr_sep = split_threshold(list(minuut_hr.values()))
+    if hr_thr is None or hr_sep < 0.05:
+        hr_thr = rhr * HR_MARGE          # terugval als er geen tweedeling is
+    else:
+        hr_thr = max(hr_thr, rhr * 1.05)
 
     asleep = []
     for m, quiet in epochs:
-        vs = hr_min.get(m)
-        low = (sum(vs) / len(vs)) < gate if vs else True
+        v = minuut_hr.get(m)
+        low = (v < hr_thr) if v is not None else True
         asleep.append((m, quiet and low))
 
     # 1. aaneengesloten slaapruns, ongeacht lengte
@@ -259,7 +270,8 @@ def detect_sleep(hr, motion, rhr):
     main = max(periods, key=lambda b: b[1] - b[0])
     span = main[1] - main[0] + 1
     slept = sum(1 for m, sl in asleep if sl and main[0] <= m <= main[1])
-    return {"threshold": thr, "separation": sep, "periods": len(periods),
+    return {"threshold": thr, "separation": sep, "hr_threshold": hr_thr,
+            "periods": len(periods),
             "start": main[0] * 60, "end": (main[1] + 1) * 60,
             "in_bed_min": span, "asleep_min": slept,
             "waso_min": span - slept,

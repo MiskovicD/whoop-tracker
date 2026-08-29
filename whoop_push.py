@@ -234,6 +234,9 @@ def main():
     p.add_argument("--sex", choices=["m", "v"], default="m")
     p.add_argument("--trimp-ref", type=float, default=300.0)
     p.add_argument("--all", action="store_true", help="alle dagen, niet alleen de laatste")
+    p.add_argument("--since", help="alleen dagen vanaf deze datum (JJJJ-MM-DD). Handig omdat er"
+                                   " oude brokstukken uit de flash kunnen komen die je"
+                                   " baseline zouden vervuilen.")
     p.add_argument("--dry-run", action="store_true", help="toon wat er verstuurd zou worden")
     p.add_argument("--battery", type=float, default=None,
                    help="accustand uit 0x2A19; overschrijft de onbetrouwbare hello-waarde")
@@ -255,6 +258,12 @@ def main():
         sys.exit("geen records in de database")
 
     wanted = sorted(days) if a.all else [max(days)]
+    if a.since:
+        grens = date(*(int(x) for x in a.since.split("-")))
+        overgeslagen = [d for d in wanted if d < grens]
+        wanted = [d for d in wanted if d >= grens]
+        for d in overgeslagen:
+            print("  %s  overgeslagen (voor %s)" % (d, a.since))
     baseline = M.load_baseline()
 
     s = None if a.dry_run else session()

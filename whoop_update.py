@@ -11,7 +11,7 @@ Eén commando: band uitlezen, doorrekenen, naar Supabase sturen.
 Draait de stappen als losse processen, zodat een mislukte stap de rest niet
 meesleurt - en zodat elke stap dezelfde code gebruikt die je los al draait.
 """
-import argparse, asyncio, json, os, subprocess, sys
+import argparse, asyncio, datetime as dt, json, os, shutil, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RESEARCH = os.path.expanduser("~/Desktop/whoop-research")
@@ -56,7 +56,11 @@ def main():
     p.add_argument("--hrmax", type=float)
     p.add_argument("--duration", type=int, default=90, help="seconden live meten")
     p.add_argument("--quick", action="store_true", help="geen meting, alleen accu + status")
-    p.add_argument("--sync", action="store_true", help="eerst de historie leegtrekken")
+    p.add_argument("--sync", action="store_true", help="één sync-ronde")
+    p.add_argument("--drain", action="store_true",
+                   help="blijf syncen tot de band leeg is (dit wil je na een nacht)")
+    p.add_argument("--rondes", type=int, default=20, help="maximum aantal drain-rondes")
+    p.add_argument("--geen-backup", action="store_true")
     p.add_argument("--save-daily", action="store_true", help="tel mee voor de baseline")
     p.add_argument("--address", "-a", default=None)
     a = p.parse_args()
@@ -73,7 +77,25 @@ def main():
 
     n = 0
 
-    if a.sync:
+    if not a.geen_backup and os.path.exists(DB):
+        n += 1
+        stap(n, "Back-up van whoop.db")
+        # De band wist wat hij verstuurd heeft ("Trim" in zijn eigen log), dus
+        # dit bestand is de enige kopie van je geschiedenis.
+        doel = os.path.join(os.path.dirname(DB),
+                            "whoop-backup-%s.db" % dt.date.today().isoformat())
+        try:
+            shutil.copy2(DB, doel)
+            print("  %s  (%.1f MB)" % (doel, os.path.getsize(doel) / 1048576))
+        except OSError as e:
+            print("  back-up mislukt: %s" % e)
+
+    if a.drain:
+        n += 1
+        stap(n, "Historie leegtrekken tot de band bij is")
+        draai([sys.executable, os.path.join(HERE, "whoop_drain.py"),
+               "--max", str(a.rondes)] + (["--address", adr] if adr else []))
+    elif a.sync:
         n += 1
         stap(n, "Historie leegtrekken")
         if not draai(basis + ["--timeout", "600", "sync"], cwd=RESEARCH):
