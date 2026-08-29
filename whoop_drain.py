@@ -13,6 +13,9 @@ zodra de nieuwste tijdstempel niet meer opschuift.
 """
 import argparse, datetime as dt, os, sqlite3, struct, subprocess, sys, time
 
+BIJ = 180        # binnen 3 minuten van nu = de band is bij
+MINIMAAL = 60    # minder dan een minuut aan nieuwe data = klaar
+
 RESEARCH = os.path.expanduser("~/Desktop/whoop-research")
 PLAYGROUND = os.path.join(RESEARCH, "research_playground.py")
 DB = os.path.join(RESEARCH, "whoop.db")
@@ -86,8 +89,17 @@ def main():
         vooruit = (t1 - t0) if (t1 and t0) else 0
         print("   +%d records, nu tot %s (+%.0f min)\n" % (erbij, klok(t1), vooruit / 60))
 
+        # Stoppen zodra we de werkelijke tijd hebben ingehaald. Wachten op nul
+        # nieuwe records werkt niet: de band loopt door, dus elke ronde levert
+        # nog de paar seconden op die er tussendoor bij kwamen.
         if erbij == 0:
             print("Niets nieuws meer - de band is bij.\n")
+            break
+        if t1 and (time.time() - t1) < BIJ:
+            print("Band is bij: historie loopt tot %s, dat is nu.\n" % klok(t1))
+            break
+        if erbij < MINIMAAL:
+            print("Nog maar %d records erbij - de band is bij.\n" % erbij)
             break
         if doel and t1 and t1 >= doel:
             print("Doel %s bereikt.\n" % a.tot)

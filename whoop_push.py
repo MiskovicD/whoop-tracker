@@ -12,7 +12,8 @@ je wachtwoord wordt nergens opgeslagen.
     python3 whoop_push.py --age 23 --dry-run    # laten zien, niets versturen
 """
 import argparse, getpass, json, os, ssl, stat, sys, urllib.error, urllib.request
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, date, timedelta, time as dt_time
+from datetime import datetime as dt_datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from whoop_report import load, sessions, series, resting_hr
@@ -23,6 +24,8 @@ SB_ANON = None          # wordt uit je bestaande app gelezen, zie anon_key()
 STATE_DIR = os.path.expanduser("~/.whoop-tracker")
 STATE = os.path.join(STATE_DIR, "session.json")
 CURVE_POINTS = 120
+NACHT_VANAF = 20        # een nacht begint na 20:00...
+NACHT_TOT = 6           # ...of voor 06:00
 
 
 # --------------------------------------------------------------- supabase
@@ -135,6 +138,13 @@ def session():
 
 
 def upsert(s, rows):
+    # PostgREST eist dat alle objecten in één verzoek dezelfde sleutels hebben
+    # ("All object keys must match"). Onze dagen verschillen: de ene heeft slaap
+    # en HRV, de andere niet. Dus vullen we de vereniging aan met None.
+    sleutels = set()
+    for r in rows:
+        sleutels |= set(r)
+    rows = [{k: r.get(k) for k in sorted(sleutels)} for r in rows]
     url = (SB_URL + "/rest/v1/whoop_days?on_conflict=user_id,day")
     return _req(url, rows, {
         "Authorization": "Bearer " + s["access_token"],
@@ -176,8 +186,24 @@ def curve(hr, n=CURVE_POINTS):
     return out
 
 
+def nacht_venster(alle, dag):
+    """
+    De records van de nacht die eindigt op deze dag: van 18:00 de avond ervoor
+    tot 12:00 diezelfde dag.
+
+    Een nacht loopt over middernacht heen. Groepeer je op kalenderdag, dan
+    knip je hem doormidden en houdt geen van beide helften genoeg over om nog
+    als slaapperiode te tellen - 447 minuten slaap werd zo 57 plus 160.
+    Whoop rekent een nacht toe aan de dag waarop je wakker wordt; dat doen we
+    hier ook.
+    """
+    van = dt_datetime.combine(dag - timedelta(days=1), dt_time(18, 0)).timestamp()
+    tot = dt_datetime.combine(dag, dt_time(12, 0)).timestamp()
+    return [r for r in alle if van <= r["t"] < tot]
+
+
 def build_row(day, recs, user_id, hrmax, sex, trimp_ref, baseline,
-              data_hello=None, battery=None):
+              data_hello=None, battery=None, nacht=None):
     sr = series(recs)
     hr = sr["hr"]
     if not hr:
@@ -188,8 +214,24 @@ def build_row(day, recs, user_id, hrmax, sex, trimp_ref, baseline,
     zones, below = M.hr_zones(hr, hrmax)
     ed = M.edwards_trimp(zones)
     ba = M.banister_trimp(hr, rhr, hrmax, sex)
-    h = M.hrv_metrics(sr["rr"])
-    sl = M.detect_sleep(hr, sr["motion"], rhr) if sr["motion"] else None
+    h = M.hrv_metrics(sr["rr"], sr.get("rr_runs"))
+
+    # Slaap uit het nachtvenster, niet uit de kalenderdag.
+    sl = None
+    if nacht:
+        ns = series(nacht)
+        if ns["hr"] and ns["motion"]:
+            kandidaat = M.detect_sleep(ns["hr"], ns["motion"],
+                                       resting_hr(ns["hr"]) or rhr)
+            # Een nacht begint 's avonds of 's nachts. Stilzitten op een
+            # ochtend lijkt op slaap - lage beweging, rustige hartslag - dus
+            # eisen we dat het begin in de nachturen valt. Dutjes overdag
+            # blijven zichtbaar in de detectie zelf, maar tellen niet als
+            # "de nacht van deze dag".
+            if kandidaat:
+                begin_uur = datetime.fromtimestamp(kandidaat["start"]).hour
+                if begin_uur >= NACHT_VANAF or begin_uur < NACHT_TOT:
+                    sl = kandidaat
 
     row = {
         "user_id": user_id, "day": day.isoformat(),
@@ -273,7 +315,8 @@ def main():
     for d in wanted:
         row = build_row(d, days[d], uid, hrmax, a.sex, a.trimp_ref, baseline,
                         data.get("hello"),
-                        battery=a.battery if d == max(days) else None)
+                        battery=a.battery if d == max(days) else None,
+                        nacht=nacht_venster(data["records"], d))
         if row is None:
             print("  %s  overgeslagen (geen hartslag)" % d)
             continue

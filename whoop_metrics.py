@@ -25,6 +25,7 @@ MERGE_GAP = 30             # minuten: korte ontwaking breekt de nacht niet
 MIN_SLEEP_MIN = 45         # minder dan dit is geen slaapperiode
 MALIK = 0.20               # RR mag max 20% van zijn buur afwijken (artefactfilter)
 HR_MARGE = 1.25            # terugvalgrens voor de hartslagpoort t.o.v. de rustwaarde
+MIN_EFFICIENTIE = 0.60     # onder dit aandeel slaap is het geen slaapperiode
 
 # Edwards-zones als fractie van HRmax, met hun gewicht
 ZONES = [(0.50, 0.60, 1), (0.60, 0.70, 2), (0.70, 0.80, 3),
@@ -238,15 +239,23 @@ def detect_sleep(hr, motion, rhr):
         low = (v < hr_thr) if v is not None else True
         asleep.append((m, quiet and low))
 
-    # 1. aaneengesloten slaapruns, ongeacht lengte
-    runs, cur = [], None
+    # 1. aaneengesloten slaapruns.
+    #    Let op de tweede voorwaarde: alleen minuten die er ook echt zijn tellen
+    #    als aaneengesloten. Ontbrekende minuten staan niet in de lijst, dus op
+    #    lijstvolgorde alleen liep een reeks dwars door een gat van uren heen -
+    #    dat leverde een "nacht" van achttien uur met 17% efficientie op.
+    runs, cur, vorige = [], None, None
     for m, is_sleep in asleep:
-        if is_sleep and cur is None:
+        onderbroken = vorige is not None and m - vorige > 2
+        if is_sleep and (cur is None or onderbroken):
+            if cur:
+                runs.append(cur)
             cur = [m, m]
         elif is_sleep:
             cur[1] = m
         elif cur is not None:
             runs.append(cur); cur = None
+        vorige = m
     if cur:
         runs.append(cur)
     if not runs:
@@ -267,7 +276,18 @@ def detect_sleep(hr, motion, rhr):
     if not periods:
         return None
 
-    main = max(periods, key=lambda b: b[1] - b[0])
+    # Alleen periodes met een geloofwaardige efficientie: een blok waarin je
+    # maar een fractie van de tijd slaapt is geen nacht maar een stilzit-venster.
+    def eff(b):
+        span = b[1] - b[0] + 1
+        sl = sum(1 for m, x in asleep if x and b[0] <= m <= b[1])
+        return sl / span if span else 0.0
+
+    geloofwaardig = [b for b in periods if eff(b) >= MIN_EFFICIENTIE]
+    if not geloofwaardig:
+        return None
+
+    main = max(geloofwaardig, key=lambda b: b[1] - b[0])
     span = main[1] - main[0] + 1
     slept = sum(1 for m, sl in asleep if sl and main[0] <= m <= main[1])
     return {"threshold": thr, "separation": sep, "hr_threshold": hr_thr,
@@ -447,7 +467,12 @@ def main():
     print("\n HERSTEL")
     bl = load_baseline()
     day = datetime.fromtimestamp(recs[0]["t"], timezone.utc).astimezone().strftime("%Y-%m-%d")
-    if a.save_daily:
+    if a.save_daily and not (h and sl):
+        print("   niet opgeslagen in de baseline: daarvoor is een nacht nodig")
+        print("   (HRV %s, slaap %s). Een baseline van losse dagmetingen"
+              % ("ja" if h else "nee", "ja" if sl else "nee"))
+        print("   is niet vergelijkbaar en maakt elke z-score scheef.")
+    elif a.save_daily:
         n = save_daily(bl, day,
                        ln_rmssd=h["ln_rmssd"] if h else None,
                        rhr=rhr,
