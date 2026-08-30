@@ -11,7 +11,7 @@
      dan even niets tonen.
 
    CACHE ophogen blijft nodig bij wijzigingen aan de statische bestanden. */
-const CACHE = "whoop-lokaal-v10";
+const CACHE = "whoop-lokaal-v11";
 const ASSETS = [
   "./",
   "./index.html",

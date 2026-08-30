@@ -370,8 +370,26 @@ function render(){
     h += `<div class="tiles">
       ${tile("ADEMHALING", d.resp_rate!=null?d.resp_rate.toFixed(1):null, "rpm",
              "resp_rate", false, d.resp_rate)}
-      ${tile("ZUURSTOF", d.spo2!=null?Math.round(d.spo2):null, "%",
-             "spo2", true, d.spo2, x => Math.round(x)+"%")}
+      ${(() => {
+        // Zuurstof is definitief niet haalbaar uit de 1 Hz-historie, dus die
+        // tegel is vervangen. Stress = je HRV in rust overdag: lager dan jouw
+        // normaal betekent meer sympathische activatie.
+        const basis = gemiddelde("stress_rmssd", d.day);
+        if (d.stress_rmssd == null)
+          return tile("STRESS", null, "", "stress_rmssd", true, null);
+        if (!basis)
+          return `<div class="tile"><div class="lab">STRESS</div>
+            <div class="val">${Math.round(d.stress_rmssd)}<small> ms</small></div>
+            <span class="badge off">baseline opbouwen</span></div>`;
+        const afw = (d.stress_rmssd - basis) / basis * 100;
+        // hoge HRV = lage stress, dus de score draait om
+        const score = Math.round(Math.max(0, Math.min(100, 50 - afw * 1.5)));
+        const kl = score >= 66 ? "warn" : "";
+        return `<div class="tile"><div class="lab">STRESS</div>
+          <div class="val">${score}<small> / 100</small></div>
+          <span class="badge ${kl}">HRV in rust ${Math.round(d.stress_rmssd)} ms,
+            ${afw > 0 ? "+" : ""}${afw.toFixed(0)}%</span></div>`;
+      })()}
       ${tile("RUSTHARTSLAG", d.rhr!=null?Math.round(d.rhr):null, "bpm",
              "rhr", false, d.rhr, x => Math.round(x))}
       ${tile("HRV", d.hrv_rmssd!=null?Math.round(d.hrv_rmssd):null, "ms",
@@ -406,9 +424,11 @@ function render(){
       <b style="color:var(--ink)">Ademhaling</b> komt uit je hartslag zelf: die versnelt
       bij inademen en vertraagt bij uitademen, dus de ademhaling zit als golf in je
       R-R-intervallen. Alleen vensters met een duidelijke piek tellen mee.<br><br>
-      <b style="color:var(--ink)">Zuurstof</b> ontbreekt en gaat er ook niet komen: dat
-      vereist de hartslaggolf op 25 Hz of hoger, terwijl de historie één meting per
-      seconde levert. Die informatie is er simpelweg niet. Alle bereiken komen uit je
+      <b style="color:var(--ink)">Stress</b> is je HRV in rust overdag, alleen gemeten
+      in vensters waarin je nauwelijks bewoog - anders meet je inspanning. Lager dan
+      jouw normaal betekent meer sympathische activatie. Zuurstof staat hier niet meer
+      bij: dat vereist de hartslaggolf op 25 Hz of hoger, terwijl de historie één meting
+      per seconde levert, dus die informatie bestaat niet. Alle bereiken komen uit je
       eigen laatste 30 dagen, niet uit een bevolkingsgemiddelde.</p></div>`;
   }
 

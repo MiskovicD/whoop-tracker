@@ -186,8 +186,26 @@ def curve(hr, n=CURVE_POINTS):
     return out
 
 
+def dag_stress(data, dag, hrmax):
+    """HRV in rust overdag, buiten de slaap - de stressmaat."""
+    van = dt_datetime.combine(dag, dt_time(0, 0)).timestamp()
+    tot = van + 86400
+    nacht = nacht_venster(data["records"], dag)
+    sl = None
+    if nacht:
+        ns = series(nacht)
+        if ns["hr"] and ns["motion"]:
+            sl = M.detect_sleep(ns["hr"], ns["motion"], resting_hr(ns["hr"]))
+    binnen = lambda t: van <= t < tot and not (sl and sl["start"] <= t <= sl["end"])
+    rr = [(r["t"], v) for r in data["records"] for v in (r["d"].get("rr_ms") or [])
+          if binnen(r["t"])]
+    mo = [(t, v) for t, v in series(data["records"])["motion"] if binnen(t)]
+    st = M.stress_dag(rr, mo) if (rr and mo) else None
+    return st["rmssd_rust"] if st else None
+
+
 def build_row(day, recs, user_id, hrmax, sex, trimp_ref, baseline,
-              data_hello=None, battery=None, nacht=None):
+              data_hello=None, battery=None, nacht=None, stress=None):
     sr = series(recs)
     hr = sr["hr"]
     if not hr:
@@ -230,6 +248,7 @@ def build_row(day, recs, user_id, hrmax, sex, trimp_ref, baseline,
         "strain21": round(M.strain21(ed, trimp_ref), 2),
         "hr_curve": curve(hr),
         "zones": {("Z%d" % (i + 1)): int(s) for i, s in zones.items()},
+        **({"stress_rmssd": round(stress, 1)} if stress else {}),
     }
     if h:
         row.update({"hrv_rmssd": round(h["rmssd"], 1), "hrv_sdnn": round(h["sdnn"], 1),
@@ -309,7 +328,8 @@ def main():
         row = build_row(d, days[d], uid, hrmax, a.sex, a.trimp_ref, baseline,
                         data.get("hello"),
                         battery=a.battery if d == max(days) else None,
-                        nacht=nacht_venster(data["records"], d))
+                        nacht=nacht_venster(data["records"], d),
+                        stress=dag_stress(data, d, hrmax))
         if row is None:
             print("  %s  overgeslagen (geen hartslag)" % d)
             continue
