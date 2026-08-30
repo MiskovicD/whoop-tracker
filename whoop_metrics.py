@@ -27,6 +27,12 @@ MIN_SLEEP_MIN = 45         # minder dan dit is geen slaapperiode
 MALIK = 0.20               # RR mag max 20% van zijn buur afwijken (artefactfilter)
 HR_MARGE = 1.25            # terugvalgrens voor de hartslagpoort t.o.v. de rustwaarde
 MIN_EFFICIENTIE = 0.60     # onder dit aandeel slaap is het geen slaapperiode
+PIEK_EIS = 15.0            # ademhalingspiek moet 15x het gemiddelde vermogen zijn.
+                           # Bij 4 kwam er 8,9/min uit, bij 15 werd het 13-14 met
+                           # een spreiding van 0,2: die lage waarde was ruis, geen
+                           # langzame ademhaling. Strenger kost vensters maar levert
+                           # een uitkomst die je kunt vertrouwen.
+MIN_VENSTERS = 20          # minder dan dit is geen bruikbare schatting
 
 # Edwards-zones als fractie van HRmax, met hun gewicht
 ZONES = [(0.50, 0.60, 1), (0.60, 0.70, 2), (0.70, 0.80, 3),
@@ -86,6 +92,97 @@ def strain21(trimp, ref):
 
 
 # ------------------------------------------------------------------- HRV
+
+def resp_rate(rr_punten, venster=300, stap=150):
+    """
+    Ademhaling uit respiratoire sinusaritmie: je hartslag versnelt bij inademen
+    en vertraagt bij uitademen, dus de ademhaling zit als golf in de reeks
+    R-R-intervallen.
+
+    rr_punten = [(tijdstip, RR in ms)], ongelijkmatig bemonsterd.
+
+    Werkwijze per venster van 5 minuten:
+      1. hermonsteren op een gelijkmatig raster van 4 Hz (lineair)
+      2. trend eruit halen met een voortschrijdend gemiddelde van 10 s
+      3. vermogen bepalen tussen 0,1 en 0,5 Hz (6 tot 30 ademhalingen/min)
+      4. de piekfrequentie is de ademhaling
+
+    De mediaan over alle vensters is de uitkomst; de spreiding ertussen zegt
+    hoeveel vertrouwen je erin mag hebben.
+
+    LET OP de bemonsteringsgrens: de band levert ongeveer 0,8 R-R-intervallen
+    per seconde, dus boven ~24 ademhalingen per minuut wordt het onbetrouwbaar.
+    Voor slaap (12-20) volstaat het net.
+    """
+    ruw = sorted((t, v) for t, v in rr_punten if 300 <= v <= 2000)
+    if len(ruw) < 200:
+        return None
+
+    # Artefacten er eerst uit (Malik): een gemiste of dubbel getelde slag geeft
+    # een sprong van tientallen procenten, en dat is breedbandige ruis die de
+    # ademhalingspiek overstemt.
+    pts, vorig = [], ruw[0][1]
+    for t, v in ruw:
+        if abs(v - vorig) <= MALIK * vorig:
+            pts.append((t, v))
+        vorig = v
+    if len(pts) < 200:
+        return None
+
+    schattingen, totaal = [], [0]
+    begin, eind = pts[0][0], pts[-1][0]
+    t0 = begin
+    while t0 + venster <= eind:
+        blok = [(t, v) for t, v in pts if t0 <= t < t0 + venster]
+        t0 += stap
+        totaal[0] += 1
+        if len(blok) < venster * 0.4:            # te weinig slagen in dit venster
+            continue
+
+        FS = 4.0
+        n = int(venster * FS)
+        raster, j = [], 0
+        for i in range(n):
+            tt = blok[0][0] + i / FS
+            while j + 1 < len(blok) and blok[j + 1][0] < tt:
+                j += 1
+            if j + 1 >= len(blok):
+                raster.append(blok[-1][1]); continue
+            t1, v1 = blok[j]; t2, v2 = blok[j + 1]
+            f = 0.0 if t2 == t1 else (tt - t1) / (t2 - t1)
+            raster.append(v1 + (v2 - v1) * max(0.0, min(1.0, f)))
+
+        k = int(FS * 5)                          # 10 s venster, halve breedte
+        x = [raster[i] - sum(raster[max(0, i - k):i + k + 1])
+             / len(raster[max(0, i - k):i + k + 1]) for i in range(n)]
+
+        spectrum = []
+        f = 0.10
+        while f <= 0.50:
+            w = 2 * math.pi * f / FS
+            re = sum(x[i] * math.cos(w * i) for i in range(n))
+            im = sum(x[i] * math.sin(w * i) for i in range(n))
+            spectrum.append((f, re * re + im * im))
+            f += 0.004
+
+        best_f, best_p = max(spectrum, key=lambda z: z[1])
+        gemiddeld = sum(p for _, p in spectrum) / len(spectrum)
+        # Alleen vensters met een duidelijk uitstekende piek. Zonder deze eis
+        # telt ruis net zo hard mee als een echte ademhalingsgolf.
+        if gemiddeld > 0 and best_p / gemiddeld >= PIEK_EIS:
+            schattingen.append(best_f * 60.0)
+
+    if len(schattingen) < MIN_VENSTERS:
+        return None
+    schattingen.sort()
+    n = len(schattingen)
+    med = schattingen[n // 2]
+    # Spreiding als halve interkwartielafstand: robuuster dan min-max, want
+    # een handvol uitschieters zegt niets over de betrouwbaarheid van de rest.
+    spreiding = (schattingen[3 * n // 4] - schattingen[n // 4]) / 2.0
+    return {"rpm": med, "vensters": n, "spreiding": spreiding,
+            "bruikbaar": 100.0 * n / max(1, totaal[0])}
+
 
 def nacht_temp(temp, sl):
     """
@@ -340,10 +437,10 @@ def load_baseline():
 
 
 def save_daily(bl, day, ln_rmssd=None, rhr=None, sleep_min=None, trimp=None,
-               skin_temp=None):
+               skin_temp=None, resp_rate=None):
     e = bl["days"].setdefault(day, {})
     for k, v in (("ln_rmssd", ln_rmssd), ("rhr", rhr), ("sleep_min", sleep_min),
-                 ("skin_temp", skin_temp), ("trimp", trimp)):
+                 ("skin_temp", skin_temp), ("resp_rate", resp_rate), ("trimp", trimp)):
         if v is not None:
             e[k] = v
     with open(BASELINE, "w") as f:
@@ -413,13 +510,19 @@ def herbouw(data, hrmax, sex, trimp_ref):
         if not h:
             continue
         t = nacht_temp(ns["temp"], sl)
+        rr_n = [(tt, v) for r in nacht for tt, v in
+                [(r["t"], x) for x in (r["d"].get("rr_ms") or [])]
+                if sl["start"] <= tt <= sl["end"]]
+        ad = resp_rate(rr_n)
         bl["days"][d.strftime("%Y-%m-%d")] = {
             "ln_rmssd": round(h["ln_rmssd"], 4), "rhr": round(rhr_n or 0, 2),
             "sleep_min": sl["asleep_min"],
-            **({"skin_temp": round(t, 1)} if t else {})}
-        print("  %s  slaap %3d min  HRV %5.1f ms  RHR %4.1f  temp %s"
+            **({"skin_temp": round(t, 1)} if t else {}),
+            **({"resp_rate": round(ad["rpm"], 1)} if ad else {})}
+        print("  %s  slaap %3d min  HRV %5.1f ms  RHR %4.1f  temp %s  adem %s"
               % (d, sl["asleep_min"], h["rmssd"], rhr_n or 0,
-                 ("%.0f" % t) if t else "-"))
+                 ("%.0f" % t) if t else "-",
+                 ("%.1f" % ad["rpm"]) if ad else "-"))
     with open(BASELINE, "w") as f:
         json.dump(bl, f, indent=1, sort_keys=True)
     print("\n%d nachten opgeslagen in %s" % (len(bl["days"]), BASELINE))
@@ -568,6 +671,15 @@ def main():
                          ("%.0f ms" % nacht_h["rmssd"]) if nacht_h else "-"))
     day = laatste_dag.strftime("%Y-%m-%d")
     nacht_t = nacht_temp(ns["temp"], nacht_sl) if (ns and nacht_sl) else None
+    nacht_ad = None
+    if ns and nacht_sl:
+        rr_nacht = [(t, v) for r in nacht for t, v in
+                    [(r["t"], x) for x in (r["d"].get("rr_ms") or [])]
+                    if nacht_sl["start"] <= t <= nacht_sl["end"]]
+        nacht_ad = resp_rate(rr_nacht)
+        if nacht_ad:
+            print("   ademhaling deze nacht: %.1f per minuut  (+/- %.1f, %d vensters)"
+                  % (nacht_ad["rpm"], nacht_ad["spreiding"], nacht_ad["vensters"]))
     if nacht_t:
         afw, n_eerder = temp_afwijking(bl, day, nacht_t)
         print("   huidtemp deze nacht: %.0f (ruw)%s" % (nacht_t,
@@ -585,6 +697,7 @@ def main():
                        rhr=resting_hr(ns["hr"]) or rhr,
                        sleep_min=nacht_sl["asleep_min"],
                        skin_temp=nacht_t,
+                       resp_rate=nacht_ad["rpm"] if nacht_ad else None,
                        trimp=ed)
         print("   %s opgeslagen in de baseline (%d dagen totaal)" % (day, n))
         bl = load_baseline()

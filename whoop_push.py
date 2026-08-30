@@ -238,6 +238,12 @@ def build_row(day, recs, user_id, hrmax, sex, trimp_ref, baseline,
         t_nacht = M.nacht_temp(sr.get("temp"), sl)
         if t_nacht:
             row["skin_temp"] = round(t_nacht, 1)
+        rr_nacht = [(t, v) for r in (nacht or []) for t, v in
+                    [(r["t"], x) for x in (r["d"].get("rr_ms") or [])]
+                    if sl["start"] <= t <= sl["end"]]
+        ad = M.resp_rate(rr_nacht)
+        if ad:
+            row["resp_rate"] = round(ad["rpm"], 1)
         row.update({
             "sleep_start": datetime.fromtimestamp(sl["start"], timezone.utc).isoformat(),
             "sleep_end": datetime.fromtimestamp(sl["end"], timezone.utc).isoformat(),

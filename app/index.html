@@ -403,10 +403,13 @@ function render(){
       nachten, niet een temperatuur in graden: de sensor levert een relatieve waarde die
       Whoop in de cloud omrekent. Dat hij stijgt bij warmte is geijkt op een sauna-meting.
       Gemeten tijdens je slaap, want dan verstoren kleding en beweging het minst.<br><br>
-      <b style="color:var(--ink)">Ademhaling en zuurstof</b> ontbreken nog. Zuurstof
-      vereist de hartslaggolf op 25 Hz of hoger; de historie levert één meting per seconde,
-      dus die informatie is er simpelweg niet. Alle bereiken komen uit je eigen laatste
-      30 dagen, niet uit een bevolkingsgemiddelde.</p></div>`;
+      <b style="color:var(--ink)">Ademhaling</b> komt uit je hartslag zelf: die versnelt
+      bij inademen en vertraagt bij uitademen, dus de ademhaling zit als golf in je
+      R-R-intervallen. Alleen vensters met een duidelijke piek tellen mee.<br><br>
+      <b style="color:var(--ink)">Zuurstof</b> ontbreekt en gaat er ook niet komen: dat
+      vereist de hartslaggolf op 25 Hz of hoger, terwijl de historie één meting per
+      seconde levert. Die informatie is er simpelweg niet. Alle bereiken komen uit je
+      eigen laatste 30 dagen, niet uit een bevolkingsgemiddelde.</p></div>`;
   }
 
   $("#body").innerHTML = h;
