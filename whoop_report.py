@@ -154,7 +154,7 @@ def laatste_met_hr(ses):
 def series(recs):
     """Trek de bruikbare tijdreeksen uit een sessie."""
     hr_by_sec = {}                # seconde -> (prioriteit, bpm); ontdubbelt
-    gsr, motion, orient, rr = [], [], [], []
+    gsr, motion, orient, rr, temp = [], [], [], [], []
     rr_per_sec = {}               # seconde -> RR-intervallen uit de historie
     g_by_sec = {}                 # seconde -> zwaartekrachtvector uit de historie
     bad_gsr = [0]
@@ -188,6 +188,10 @@ def series(recs):
         a = d.get("accel_g")
         if isinstance(a, list) and len(a) == 3:
             g_by_sec[int(t)] = a
+
+        v = d.get("skin_temp_raw")
+        if isinstance(v, (int, float)) and 200 < v < 4000:
+            temp.append((t, float(v)))
 
         for key in ("rr_intervals_ms", "rr_ms", "rr_raw"):
             v = d.get(key)
@@ -227,7 +231,7 @@ def series(recs):
         runs.append(huidig)
 
     return {"hr": hr, "gsr": gsr, "motion": motion, "orient": orient, "rr": rr,
-            "rr_runs": runs, "gsr_dropped": bad_gsr[0]}
+            "temp": temp, "rr_runs": runs, "gsr_dropped": bad_gsr[0]}
 
 
 def resting_hr(hr):

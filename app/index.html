@@ -228,6 +228,12 @@ const recCol = p => p >= 67 ? "var(--green)" : p >= 34 ? "var(--yellow)" : "var(
 
 /* ---------- baseline-bereik uit de geladen dagen ---------- */
 
+function gemiddelde(key, behalve){
+  const v = rows.filter(r => r.day !== behalve).map(r => r[key]).filter(x => x != null);
+  if (v.length < 2) return null;
+  return v.reduce((a, b) => a + b, 0) / v.length;
+}
+
 function range(key){
   const v = rows.map(r => r[key]).filter(x => x != null);
   if(v.length < 7) return null;
@@ -370,15 +376,37 @@ function render(){
              "rhr", false, d.rhr, x => Math.round(x))}
       ${tile("HRV", d.hrv_rmssd!=null?Math.round(d.hrv_rmssd):null, "ms",
              "hrv_rmssd", true, d.hrv_rmssd, x => Math.round(x))}
-      ${tile("HUIDTEMP", d.skin_temp!=null?d.skin_temp.toFixed(1):null, "&deg;C",
-             "skin_temp", false, d.skin_temp)}
+      ${(() => {
+        // De sensor levert een ruwe, relatieve waarde - geen graden. Betekenis
+        // krijgt hij pas als afwijking van je eigen nachten, en dat is ook wat
+        // Whoop toont. Richting geijkt op 27-08: warmte laat hem stijgen.
+        const basis = gemiddelde("skin_temp", d.day);
+        if (d.skin_temp == null)
+          return tile("HUIDTEMP", null, "", "skin_temp", false, null);
+        if (!basis) {
+          const heb = rows.filter(r => r.day !== d.day && r.skin_temp != null).length;
+          return `<div class="tile"><div class="lab">HUIDTEMP</div>
+            <div class="val">${Math.round(d.skin_temp)}</div>
+            <span class="badge off">nog ${2 - heb} nacht${2 - heb === 1 ? "" : "en"} nodig</span></div>`;
+        }
+        const afw = (d.skin_temp - basis) / basis * 100;
+        return tile("HUIDTEMP", (afw > 0 ? "+" : "") + afw.toFixed(1), "%",
+                    "skin_temp", false, d.skin_temp,
+                    x => { const p = (x - basis) / basis * 100;
+                           return (p > 0 ? "+" : "") + p.toFixed(1) + "%"; });
+      })()}
       ${tile("SLAAP", d.sleep_min!=null?(d.sleep_min/60).toFixed(1):null, "u",
              "sleep_min", true, d.sleep_min, x => (x/60).toFixed(1)+" u")}
     </div>`;
     h += `<div class="card" style="margin-top:11px"><p class="note" style="border:0;padding:0;margin:0">
-      Ademhaling, zuurstof en huidtemperatuur meet de band alleen tijdens je slaap, in
-      0x5C-records. Die zijn nog niet gedecodeerd in deze pijplijn — vandaar de streepjes.
-      De bereiken komen uit je eigen laatste 30 dagen, niet uit een bevolkingsgemiddelde.</p></div>`;
+      <b style="color:var(--ink)">Huidtemperatuur</b> is een afwijking van je eigen
+      nachten, niet een temperatuur in graden: de sensor levert een relatieve waarde die
+      Whoop in de cloud omrekent. Dat hij stijgt bij warmte is geijkt op een sauna-meting.
+      Gemeten tijdens je slaap, want dan verstoren kleding en beweging het minst.<br><br>
+      <b style="color:var(--ink)">Ademhaling en zuurstof</b> ontbreken nog. Zuurstof
+      vereist de hartslaggolf op 25 Hz of hoger; de historie levert één meting per seconde,
+      dus die informatie is er simpelweg niet. Alle bereiken komen uit je eigen laatste
+      30 dagen, niet uit een bevolkingsgemiddelde.</p></div>`;
   }
 
   $("#body").innerHTML = h;

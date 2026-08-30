@@ -87,6 +87,33 @@ def strain21(trimp, ref):
 
 # ------------------------------------------------------------------- HRV
 
+def nacht_temp(temp, sl):
+    """
+    Gemiddelde huidtemperatuur tijdens de slaap.
+
+    De waarde is een ruwe ADC-uitlezing, niet in graden - Whoop rekent die
+    in de cloud om. Wel weten we sinds de sauna-meting van 27-08 dat hij
+    STIJGT bij warmte, dus de afwijking t.o.v. je eigen baseline is
+    betekenisvol. Dat is ook wat Whoop zelf toont.
+    """
+    if not temp or not sl:
+        return None
+    v = [x for t, x in temp if sl["start"] <= t <= sl["end"]]
+    if len(v) < 60:
+        return None
+    return sum(v) / len(v)
+
+
+def temp_afwijking(bl, vandaag, waarde):
+    """Afwijking t.o.v. het gemiddelde van je eerdere nachten, in procenten."""
+    eerder = [d["skin_temp"] for dag, d in bl["days"].items()
+              if dag != vandaag and d.get("skin_temp")]
+    if len(eerder) < 2 or not waarde:
+        return None, len(eerder)
+    m = sum(eerder) / len(eerder)
+    return (100.0 * (waarde - m) / m), len(eerder)
+
+
 def hrv_metrics(rr, runs=None):
     """
     rr    = alle RR-intervallen in ms (voor SDNN en het gemiddelde)
@@ -312,10 +339,11 @@ def load_baseline():
     return {"days": {}}
 
 
-def save_daily(bl, day, ln_rmssd=None, rhr=None, sleep_min=None, trimp=None):
+def save_daily(bl, day, ln_rmssd=None, rhr=None, sleep_min=None, trimp=None,
+               skin_temp=None):
     e = bl["days"].setdefault(day, {})
-    for k, v in (("ln_rmssd", ln_rmssd), ("rhr", rhr),
-                 ("sleep_min", sleep_min), ("trimp", trimp)):
+    for k, v in (("ln_rmssd", ln_rmssd), ("rhr", rhr), ("sleep_min", sleep_min),
+                 ("skin_temp", skin_temp), ("trimp", trimp)):
         if v is not None:
             e[k] = v
     with open(BASELINE, "w") as f:
@@ -355,6 +383,48 @@ def recovery(bl, today, ln_rmssd, rhr):
 
 # ------------------------------------------------------------------- CLI
 
+def herbouw(data, hrmax, sex, trimp_ref):
+    """
+    Bouwt baseline.json opnieuw op uit elke nacht in de database.
+
+    Nodig omdat de toewijzing onderweg veranderde: eerst op sessiedatum, nu op
+    de dag van ontwaken. Zo staan er dagen door elkaar en ontbreken er nachten.
+    """
+    from datetime import date as _date
+    dagen = sorted({datetime.fromtimestamp(r["t"]).astimezone().date()
+                    for r in data["records"]})
+    bl = {"days": {}}
+    print("Baseline opnieuw opbouwen uit %d dagen...\n" % len(dagen))
+    for d in dagen:
+        nacht = nacht_venster(data["records"], d)
+        if not nacht:
+            continue
+        ns = series(nacht)
+        if not (ns["hr"] and ns["motion"]):
+            continue
+        rhr_n = resting_hr(ns["hr"])
+        sl = detect_sleep(ns["hr"], ns["motion"], rhr_n or 60)
+        if not sl:
+            continue
+        if not (datetime.fromtimestamp(sl["start"]).hour >= 20
+                or datetime.fromtimestamp(sl["start"]).hour < 6):
+            continue
+        h = hrv_metrics(ns["rr"], ns.get("rr_runs"))
+        if not h:
+            continue
+        t = nacht_temp(ns["temp"], sl)
+        bl["days"][d.strftime("%Y-%m-%d")] = {
+            "ln_rmssd": round(h["ln_rmssd"], 4), "rhr": round(rhr_n or 0, 2),
+            "sleep_min": sl["asleep_min"],
+            **({"skin_temp": round(t, 1)} if t else {})}
+        print("  %s  slaap %3d min  HRV %5.1f ms  RHR %4.1f  temp %s"
+              % (d, sl["asleep_min"], h["rmssd"], rhr_n or 0,
+                 ("%.0f" % t) if t else "-"))
+    with open(BASELINE, "w") as f:
+        json.dump(bl, f, indent=1, sort_keys=True)
+    print("\n%d nachten opgeslagen in %s" % (len(bl["days"]), BASELINE))
+
+
 def bar(frac, width=28):
     n = int(round(max(0.0, min(1.0, frac)) * width))
     return "#" * n + "." * (width - n)
@@ -372,6 +442,8 @@ def main():
                    help="TRIMP van een zware dag; ijkpunt voor de 0-21 schaal")
     p.add_argument("--all-sessions", action="store_true", help="alle sessies samen i.p.v. de laatste")
     p.add_argument("--save-daily", action="store_true", help="voeg vandaag toe aan de baseline")
+    p.add_argument("--herbouw-baseline", action="store_true",
+                   help="bouw baseline.json opnieuw op uit alle nachten in de database")
     p.add_argument("--json", help="schrijf de uitkomsten ook als JSON")
     a = p.parse_args()
 
@@ -386,6 +458,11 @@ def main():
         sys.exit("geef --age of --hrmax mee")
 
     data = load(a.db)
+
+    if a.herbouw_baseline:
+        herbouw(data, hrmax, a.sex, a.trimp_ref)
+        return
+
     ses = sessions(data["records"])
     if not ses:
         sys.exit("geen records in de database")
@@ -490,6 +567,13 @@ def main():
                          kandidaat["asleep_min"],
                          ("%.0f ms" % nacht_h["rmssd"]) if nacht_h else "-"))
     day = laatste_dag.strftime("%Y-%m-%d")
+    nacht_t = nacht_temp(ns["temp"], nacht_sl) if (ns and nacht_sl) else None
+    if nacht_t:
+        afw, n_eerder = temp_afwijking(bl, day, nacht_t)
+        print("   huidtemp deze nacht: %.0f (ruw)%s" % (nacht_t,
+              ("   %+.1f%% t.o.v. %d eerdere nachten" % (afw, n_eerder))
+              if afw is not None else "   (nog geen vergelijking)"))
+
     if a.save_daily and not (nacht_h and nacht_sl):
         print("   niet opgeslagen in de baseline: daarvoor is een nacht nodig")
         print("   (HRV %s, slaap %s). Een baseline van losse dagmetingen"
@@ -500,6 +584,7 @@ def main():
                        ln_rmssd=nacht_h["ln_rmssd"],
                        rhr=resting_hr(ns["hr"]) or rhr,
                        sleep_min=nacht_sl["asleep_min"],
+                       skin_temp=nacht_t,
                        trimp=ed)
         print("   %s opgeslagen in de baseline (%d dagen totaal)" % (day, n))
         bl = load_baseline()

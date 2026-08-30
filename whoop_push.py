@@ -235,6 +235,9 @@ def build_row(day, recs, user_id, hrmax, sex, trimp_ref, baseline,
         row.update({"hrv_rmssd": round(h["rmssd"], 1), "hrv_sdnn": round(h["sdnn"], 1),
                     "ln_rmssd": round(h["ln_rmssd"], 4), "hrv_n": h["n"]})
     if sl:
+        t_nacht = M.nacht_temp(sr.get("temp"), sl)
+        if t_nacht:
+            row["skin_temp"] = round(t_nacht, 1)
         row.update({
             "sleep_start": datetime.fromtimestamp(sl["start"], timezone.utc).isoformat(),
             "sleep_end": datetime.fromtimestamp(sl["end"], timezone.utc).isoformat(),
