@@ -207,14 +207,22 @@ def series(recs):
     # Beweging uit de historie: de band levert daar één zwaartekrachtvector per
     # seconde, geen min/max zoals R10. De verandering tussen twee opeenvolgende
     # seconden is dan de bruikbare activiteitsmaat.
-    if g_by_sec and not motion:
+    # Historie en live samenvoegen, niet of/of. Eerder stond hier "and not
+    # motion": zodra er één live R10-record in de set zat, werd de hele
+    # bewegingsreeks uit de historie overgeslagen - en dat is juist het deel
+    # dat een hele dag beslaat.
+    if g_by_sec:
+        al_bekend = {int(t) for t, _ in motion}
         secs = sorted(g_by_sec)
         for vorige, nu in zip(secs, secs[1:]):
             if nu - vorige > 3:
                 continue
+            if nu in al_bekend:
+                continue
             a, b = g_by_sec[vorige], g_by_sec[nu]
             d3 = math.sqrt(sum((b[i] - a[i]) ** 2 for i in range(3)))
             motion.append((float(nu), d3 * 1000.0))     # milli-g, leesbaarder
+        motion.sort()
 
     # RR-intervallen alleen aaneenrijgen binnen een ononderbroken reeks: over
     # een gat heen is het verschil tussen twee intervallen betekenisloos, en

@@ -13,7 +13,7 @@ Alle formules zijn gepubliceerd en na te slaan - geen black box:
     python3 whoop_metrics.py --hrmax 191 --save-daily
 """
 import argparse, json, math, os, statistics, sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, time as dt_time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from whoop_report import (load, sessions, series, rmssd, sdnn,
@@ -92,6 +92,115 @@ def strain21(trimp, ref):
 
 
 # ------------------------------------------------------------------- HRV
+
+def stress_index(rr, bin_ms=50):
+    """
+    Baevsky's Stress Index: SI = AMo / (2 * Mo * MxDMn)
+
+      Mo     de meest voorkomende RR-waarde (in seconden)
+      AMo    het percentage intervallen dat in dat bakje valt
+      MxDMn  het bereik van de intervallen (in seconden)
+
+    Hoe smaller je hartslag varieert, hoe hoger de uitkomst. Het is de
+    standaardmaat uit het HRV-onderzoek voor sympathische activatie, en het
+    enige eerlijke alternatief nu het gsr-veld waardeloos blijkt: de source
+    zegt daarover letterlijk dat het apparaat het niet eens uitleest.
+
+    Rust ligt grofweg tussen 50 en 150; boven de 500 spreekt men van sterke
+    activatie. Die grenzen zijn populatiewaarden - je eigen baseline zegt meer.
+    """
+    v = [x for x in rr if 300 <= x <= 2000]
+    if len(v) < 30:
+        return None
+    # artefacten eruit, anders blaast MxDMn op door één gemiste slag
+    v.sort()
+    lo, hi = v[len(v) // 40], v[-max(1, len(v) // 40)]
+    v = [x for x in v if lo <= x <= hi]
+    if len(v) < 30:
+        return None
+
+    bakjes = {}
+    for x in v:
+        bakjes[int(x // bin_ms)] = bakjes.get(int(x // bin_ms), 0) + 1
+    top = max(bakjes, key=bakjes.get)
+    mo = (top * bin_ms + bin_ms / 2.0) / 1000.0        # seconden
+    amo = 100.0 * bakjes[top] / len(v)                 # procent
+    mxdmn = (max(v) - min(v)) / 1000.0                 # seconden
+    if mo <= 0 or mxdmn <= 0:
+        return None
+    return {"si": amo / (2.0 * mo * mxdmn), "mo": mo, "amo": amo, "mxdmn": mxdmn, "n": len(v)}
+
+
+def stress_dag(rr_punten, motion, rr_runs=None, venster=300):
+    """
+    Stress als afwijking van je eigen HRV in rust, overdag.
+
+    Waarom niet Baevsky's Stress Index: getest op deze data gaf die 53 tijdens
+    de slaap tegen 44 wakker-en-rustig - nauwelijks verschil en de verkeerde
+    kant op. Die maat versmalt namelijk ook in diepe slaap, terwijl je dan
+    juist ontspannen bent.
+
+    Wat wel werkt is de maat die we al vertrouwen: RMSSD. Een lagere HRV dan
+    jouw normaal betekent meer sympathische activatie. Alleen gemeten in
+    vensters waarin je nauwelijks bewoog, anders meet je inspanning.
+    """
+    if not rr_punten or not motion:
+        return None
+    bew = {int(t): v for t, v in motion}
+    if not bew:
+        return None
+    rustig_grens = sorted(bew.values())[len(bew) // 3]      # onderste derde
+
+    pts = sorted(rr_punten)
+    waarden, t0 = [], pts[0][0]
+    while t0 + venster <= pts[-1][0]:
+        m = [bew[s] for s in range(int(t0), int(t0) + venster) if s in bew]
+        # Mediaan, niet gemiddelde: één keer je arm bewegen geeft een piek van
+        # duizenden en zou een verder rustig venster van vijf minuten
+        # diskwalificeren.
+        if m and sorted(m)[len(m) // 2] < rustig_grens:
+            blok = [v for t, v in pts if t0 <= t < t0 + venster]
+            h = hrv_metrics(blok, [blok])
+            if h:
+                waarden.append(h["rmssd"])
+        t0 += venster
+    if len(waarden) < 3:
+        return None
+    waarden.sort()
+    return {"rmssd_rust": waarden[len(waarden) // 2], "vensters": len(waarden)}
+
+
+def stress_score(bl, vandaag, rmssd_rust):
+    """0-100, waarbij hoog = meer stress. Vereist een baseline van 7 dagen."""
+    eerder = [d["stress_rmssd"] for dag, d in bl["days"].items()
+              if dag != vandaag and d.get("stress_rmssd")]
+    if len(eerder) < MIN_BASELINE_DAYS or not rmssd_rust:
+        return {"ready": False, "have": len(eerder), "need": MIN_BASELINE_DAYS}
+    m = statistics.mean(eerder)
+    sd = statistics.pstdev(eerder) or 0.01
+    z = (rmssd_rust - m) / sd                 # hogere HRV = minder stress
+    return {"ready": True, "score": 50.0 - 50.0 * math.tanh(z / 1.8), "z": z}
+
+
+def stress_reeks(rr_punten, venster=300, stap=300):
+    """Stress-index per venster van 5 minuten; geeft mediaan, piek en verloop."""
+    pts = sorted(rr_punten)
+    if len(pts) < 100:
+        return None
+    uit = []
+    t0 = pts[0][0]
+    while t0 + venster <= pts[-1][0]:
+        blok = [v for t, v in pts if t0 <= t < t0 + venster]
+        r = stress_index(blok)
+        if r:
+            uit.append((t0, r["si"]))
+        t0 += stap
+    if len(uit) < 3:
+        return None
+    w = sorted(x for _, x in uit)
+    return {"mediaan": w[len(w) // 2], "piek": w[-1], "laag": w[len(w) // 10],
+            "vensters": len(uit), "verloop": uit}
+
 
 def resp_rate(rr_punten, venster=300, stap=150):
     """
@@ -437,10 +546,11 @@ def load_baseline():
 
 
 def save_daily(bl, day, ln_rmssd=None, rhr=None, sleep_min=None, trimp=None,
-               skin_temp=None, resp_rate=None):
+               skin_temp=None, resp_rate=None, stress_rmssd=None, gevoel=None):
     e = bl["days"].setdefault(day, {})
     for k, v in (("ln_rmssd", ln_rmssd), ("rhr", rhr), ("sleep_min", sleep_min),
-                 ("skin_temp", skin_temp), ("resp_rate", resp_rate), ("trimp", trimp)):
+                 ("skin_temp", skin_temp), ("resp_rate", resp_rate),
+                 ("stress_rmssd", stress_rmssd), ("gevoel", gevoel), ("trimp", trimp)):
         if v is not None:
             e[k] = v
     with open(BASELINE, "w") as f:
@@ -545,6 +655,9 @@ def main():
                    help="TRIMP van een zware dag; ijkpunt voor de 0-21 schaal")
     p.add_argument("--all-sessions", action="store_true", help="alle sessies samen i.p.v. de laatste")
     p.add_argument("--save-daily", action="store_true", help="voeg vandaag toe aan de baseline")
+    p.add_argument("--gevoel", type=int, choices=[1,2,3,4,5],
+                   help="hoe voel je je vanochtend, 1 tot 5. Dit is de doelvariabele: "
+                        "pas hiermee kun je narekenen welke meting JOUW gevoel voorspelt")
     p.add_argument("--herbouw-baseline", action="store_true",
                    help="bouw baseline.json opnieuw op uit alle nachten in de database")
     p.add_argument("--json", help="schrijf de uitkomsten ook als JSON")
@@ -655,7 +768,7 @@ def main():
     laatste_dag = datetime.fromtimestamp(data["records"][-1]["t"]).astimezone().date()
     nacht = nacht_venster(data["records"], laatste_dag)
     ns = series(nacht) if nacht else None
-    nacht_h = nacht_sl = None
+    nacht_h = nacht_sl = nacht_ad = None
     if ns and ns["hr"] and ns["motion"]:
         nacht_rhr = resting_hr(ns["hr"]) or rhr
         kandidaat = detect_sleep(ns["hr"], ns["motion"], nacht_rhr)
@@ -671,7 +784,7 @@ def main():
                          ("%.0f ms" % nacht_h["rmssd"]) if nacht_h else "-"))
     day = laatste_dag.strftime("%Y-%m-%d")
     nacht_t = nacht_temp(ns["temp"], nacht_sl) if (ns and nacht_sl) else None
-    nacht_ad = None
+    dag_stress = None
     if ns and nacht_sl:
         rr_nacht = [(t, v) for r in nacht for t, v in
                     [(r["t"], x) for x in (r["d"].get("rr_ms") or [])]
@@ -686,6 +799,29 @@ def main():
               ("   %+.1f%% t.o.v. %d eerdere nachten" % (afw, n_eerder))
               if afw is not None else "   (nog geen vergelijking)"))
 
+    # stress overdag: HRV in rust, alleen in vensters met weinig beweging
+    # Let op: over ALLE records van die dag, niet over de laatste sessie.
+    # Een sessie kan grotendeels de nacht zijn, en dan blijft er overdag niets
+    # over om op te meten.
+    dag0 = datetime.combine(laatste_dag, dt_time(0, 0)).timestamp()
+    dag1 = dag0 + 86400
+    dag_rr = [(r["t"], v) for r in data["records"]
+              for v in (r["d"].get("rr_ms") or [])
+              if dag0 <= r["t"] < dag1
+              and not (nacht_sl and nacht_sl["start"] <= r["t"] <= nacht_sl["end"])]
+    # Ook de bewegingsdrempel uit de DAG halen. Werd die over alles bepaald,
+    # dan drukt de nacht hem zo laag dat geen enkel dagvenster nog "rustig" is.
+    dag_motion = [(t, v) for t, v in series(data["records"])["motion"]
+                  if dag0 <= t < dag1
+                  and not (nacht_sl and nacht_sl["start"] <= t <= nacht_sl["end"])]
+    st = stress_dag(dag_rr, dag_motion) if (dag_rr and dag_motion) else None
+    if st:
+        sc = stress_score(bl, day, st["rmssd_rust"])
+        print("   stress overdag: HRV in rust %.1f ms over %d rustige vensters%s"
+              % (st["rmssd_rust"], st["vensters"],
+                 ("   -> score %.0f/100" % sc["score"]) if sc.get("ready")
+                 else "   (score na %d dagen baseline)" % sc.get("need", 7)))
+
     if a.save_daily and not (nacht_h and nacht_sl):
         print("   niet opgeslagen in de baseline: daarvoor is een nacht nodig")
         print("   (HRV %s, slaap %s). Een baseline van losse dagmetingen"
@@ -698,6 +834,8 @@ def main():
                        sleep_min=nacht_sl["asleep_min"],
                        skin_temp=nacht_t,
                        resp_rate=nacht_ad["rpm"] if nacht_ad else None,
+                       stress_rmssd=st["rmssd_rust"] if st else None,
+                       gevoel=a.gevoel,
                        trimp=ed)
         print("   %s opgeslagen in de baseline (%d dagen totaal)" % (day, n))
         bl = load_baseline()
