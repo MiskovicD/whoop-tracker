@@ -16,7 +16,7 @@ from datetime import datetime, timezone, date, timedelta, time as dt_time
 from datetime import datetime as dt_datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from whoop_report import load, sessions, series, resting_hr
+from whoop_report import load, sessions, series, resting_hr, nacht_venster
 import whoop_metrics as M
 
 SB_URL = "https://zxlythycfgpqwpquuswg.supabase.co"
@@ -184,22 +184,6 @@ def curve(hr, n=CURVE_POINTS):
             out.append([int(chunk[0][0]),
                         round(sum(v for _, v in chunk) / len(chunk), 1)])
     return out
-
-
-def nacht_venster(alle, dag):
-    """
-    De records van de nacht die eindigt op deze dag: van 18:00 de avond ervoor
-    tot 12:00 diezelfde dag.
-
-    Een nacht loopt over middernacht heen. Groepeer je op kalenderdag, dan
-    knip je hem doormidden en houdt geen van beide helften genoeg over om nog
-    als slaapperiode te tellen - 447 minuten slaap werd zo 57 plus 160.
-    Whoop rekent een nacht toe aan de dag waarop je wakker wordt; dat doen we
-    hier ook.
-    """
-    van = dt_datetime.combine(dag - timedelta(days=1), dt_time(18, 0)).timestamp()
-    tot = dt_datetime.combine(dag, dt_time(12, 0)).timestamp()
-    return [r for r in alle if van <= r["t"] < tot]
 
 
 def build_row(day, recs, user_id, hrmax, sex, trimp_ref, baseline,

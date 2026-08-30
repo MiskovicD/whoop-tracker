@@ -14,7 +14,9 @@ zodra de nieuwste tijdstempel niet meer opschuift.
 import argparse, datetime as dt, os, sqlite3, struct, subprocess, sys, time
 
 BIJ = 180        # binnen 3 minuten van nu = de band is bij
-MINIMAAL = 60    # minder dan een minuut aan nieuwe data = klaar
+MINIMAAL = 60    # minder dan een minuut aan nieuwe data = magere ronde
+MAGER_MAX = 4    # pas na zoveel magere rondes op rij stoppen
+RUST = 6         # seconden tussen rondes; de band meldt zelf 'idle - settle'
 
 RESEARCH = os.path.expanduser("~/Desktop/whoop-research")
 PLAYGROUND = os.path.join(RESEARCH, "research_playground.py")
@@ -78,6 +80,7 @@ def main():
     cmd += ["--timeout", str(a.timeout), "sync"]
 
     n0, t0 = stand()
+    mager = 0
     print("start: %d records, tot %s\n" % (n0, klok(t0)))
 
     for ronde in range(1, a.max + 1):
@@ -98,14 +101,22 @@ def main():
         if t1 and (time.time() - t1) < BIJ:
             print("Band is bij: historie loopt tot %s, dat is nu.\n" % klok(t1))
             break
+        # Eén magere ronde betekent niet dat de band leeg is: bursts verschillen
+        # in grootte. Pas na twee op rij stoppen we, anders breekt de lus af
+        # terwijl er nog uren op de band staan.
         if erbij < MINIMAAL:
-            print("Nog maar %d records erbij - de band is bij.\n" % erbij)
-            break
+            mager += 1
+            if mager >= MAGER_MAX:
+                print("%d magere rondes op rij - de band is bij.\n" % mager)
+                break
+            print("   (magere ronde %d/%d, de band moet even bijkomen)" % (mager, MAGER_MAX))
+        else:
+            mager = 0
         if doel and t1 and t1 >= doel:
             print("Doel %s bereikt.\n" % a.tot)
             break
         n0, t0 = n1, t1
-        time.sleep(2)
+        time.sleep(RUST)
     else:
         print("Maximum aantal rondes bereikt; draai nog eens als je verder wilt.\n")
 

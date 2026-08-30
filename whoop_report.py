@@ -6,7 +6,7 @@ self-contained HTML-rapport. Alleen stdlib - geen pip install nodig.
     python3 whoop_report.py [pad/naar/whoop.db] [-o rapport.html]
 """
 import argparse, json, math, os, sqlite3, struct, sys, html
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta, time
 
 GAP = 120.0          # seconden stilte -> nieuwe sessie
 HIST_TYPES = (0x05, 0x07)   # 1 Hz-historie; beide dezelfde indeling als R24.
@@ -17,6 +17,22 @@ RHR_WINDOW = 60      # rolling venster voor rusthartslag
 
 
 # ---------------------------------------------------------------- inlezen
+
+def nacht_venster(alle, dag):
+    """
+    De records van de nacht die eindigt op deze dag: van 18:00 de avond ervoor
+    tot 12:00 diezelfde dag.
+
+    Een nacht loopt over middernacht heen. Groepeer je op kalenderdag, dan
+    knip je hem doormidden en houdt geen van beide helften genoeg over om nog
+    als slaapperiode te tellen - 447 minuten slaap werd zo 57 plus 160.
+    Whoop rekent een nacht toe aan de dag waarop je wakker wordt; dat doen we
+    hier ook.
+    """
+    van = datetime.combine(dag - timedelta(days=1), time(18, 0)).timestamp()
+    tot = datetime.combine(dag, time(12, 0)).timestamp()
+    return [r for r in alle if van <= r["t"] < tot]
+
 
 def read_history(con):
     """

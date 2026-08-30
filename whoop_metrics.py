@@ -17,7 +17,8 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from whoop_report import (load, sessions, series, rmssd, sdnn,
-                          fmt_dur, fmt_t, resting_hr, laatste_met_hr)
+                          fmt_dur, fmt_t, resting_hr, laatste_met_hr,
+                          nacht_venster)
 
 BASELINE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "baseline.json")
 MIN_BASELINE_DAYS = 7      # onder dit aantal is een z-score betekenisloos
@@ -466,17 +467,39 @@ def main():
     # -- herstel
     print("\n HERSTEL")
     bl = load_baseline()
-    day = datetime.fromtimestamp(recs[0]["t"], timezone.utc).astimezone().strftime("%Y-%m-%d")
-    if a.save_daily and not (h and sl):
+
+    # De baseline gaat over NACHTEN, niet over sessies. Een sessie loopt
+    # inmiddels over meerdere dagen, en dan vindt detect_sleep telkens dezelfde
+    # eerste nacht terug en overschrijft die onder dezelfde datum - waardoor de
+    # baseline nooit groeit. Dus: pak het nachtvenster van de laatste dag.
+    laatste_dag = datetime.fromtimestamp(data["records"][-1]["t"]).astimezone().date()
+    nacht = nacht_venster(data["records"], laatste_dag)
+    ns = series(nacht) if nacht else None
+    nacht_h = nacht_sl = None
+    if ns and ns["hr"] and ns["motion"]:
+        nacht_rhr = resting_hr(ns["hr"]) or rhr
+        kandidaat = detect_sleep(ns["hr"], ns["motion"], nacht_rhr)
+        if kandidaat:
+            begin = datetime.fromtimestamp(kandidaat["start"]).hour
+            if begin >= 20 or begin < 6:          # een nacht begint 's nachts
+                nacht_sl = kandidaat
+                nacht_h = hrv_metrics(ns["rr"], ns.get("rr_runs"))
+                print("   nacht van %s: %s, %d min geslapen, HRV %s"
+                      % (laatste_dag.strftime("%d-%m"),
+                         datetime.fromtimestamp(kandidaat["start"]).strftime("%H:%M"),
+                         kandidaat["asleep_min"],
+                         ("%.0f ms" % nacht_h["rmssd"]) if nacht_h else "-"))
+    day = laatste_dag.strftime("%Y-%m-%d")
+    if a.save_daily and not (nacht_h and nacht_sl):
         print("   niet opgeslagen in de baseline: daarvoor is een nacht nodig")
         print("   (HRV %s, slaap %s). Een baseline van losse dagmetingen"
-              % ("ja" if h else "nee", "ja" if sl else "nee"))
+              % ("ja" if nacht_h else "nee", "ja" if nacht_sl else "nee"))
         print("   is niet vergelijkbaar en maakt elke z-score scheef.")
     elif a.save_daily:
         n = save_daily(bl, day,
-                       ln_rmssd=h["ln_rmssd"] if h else None,
-                       rhr=rhr,
-                       sleep_min=sl["asleep_min"] if sl else None,
+                       ln_rmssd=nacht_h["ln_rmssd"],
+                       rhr=resting_hr(ns["hr"]) or rhr,
+                       sleep_min=nacht_sl["asleep_min"],
                        trimp=ed)
         print("   %s opgeslagen in de baseline (%d dagen totaal)" % (day, n))
         bl = load_baseline()
