@@ -11,7 +11,7 @@ je wachtwoord wordt nergens opgeslagen.
     python3 whoop_push.py --age 23 --all        # alle dagen in de database
     python3 whoop_push.py --age 23 --dry-run    # laten zien, niets versturen
 """
-import argparse, getpass, json, os, ssl, stat, sys, urllib.error, urllib.request
+import argparse, getpass, json, os, re, ssl, stat, sys, urllib.error, urllib.request
 from datetime import datetime, timezone, date, timedelta, time as dt_time
 from datetime import datetime as dt_datetime
 
@@ -137,7 +137,7 @@ def session():
         return login()
 
 
-def upsert(s, rows):
+def upsert(s, rows, _diepte=0):
     # PostgREST eist dat alle objecten in één verzoek dezelfde sleutels hebben
     # ("All object keys must match"). Onze dagen verschillen: de ene heeft slaap
     # en HRV, de andere niet. Dus vullen we de vereniging aan met None.
@@ -146,10 +146,24 @@ def upsert(s, rows):
         sleutels |= set(r)
     rows = [{k: r.get(k) for k in sorted(sleutels)} for r in rows]
     url = (SB_URL + "/rest/v1/whoop_days?on_conflict=user_id,day")
-    return _req(url, rows, {
-        "Authorization": "Bearer " + s["access_token"],
-        "Prefer": "resolution=merge-duplicates,return=minimal",
-    }, method="POST")
+    try:
+        return _req(url, rows, {
+            "Authorization": "Bearer " + s["access_token"],
+            "Prefer": "resolution=merge-duplicates,return=minimal",
+        }, method="POST")
+    except RuntimeError as e:
+        # Ontbreekt er een kolom, laat die dan vallen en stuur de rest alsnog.
+        # Een schema dat achterloopt op de code hoort niet je hele dag aan
+        # metingen tegen te houden - je verliest dan ook alles wat wel past.
+        detail = getattr(e, "detail", "")
+        m = re.search(r"column whoop_days\.(\w+) does not exist", detail) or \
+            re.search(r"Could not find the '(\w+)' column", detail)
+        if not m or _diepte > 6:
+            raise
+        weg = m.group(1)
+        print("  kolom '%s' bestaat niet in de database - overgeslagen" % weg)
+        gestript = [{k: v for k, v in r.items() if k != weg} for r in rows]
+        return upsert(s, gestript, _diepte + 1)
 
 
 # ------------------------------------------------------------ per dag
