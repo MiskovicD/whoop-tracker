@@ -27,6 +27,7 @@ MIN_SLEEP_MIN = 45         # minder dan dit is geen slaapperiode
 MALIK = 0.20               # RR mag max 20% van zijn buur afwijken (artefactfilter)
 HR_MARGE = 1.25            # terugvalgrens voor de hartslagpoort t.o.v. de rustwaarde
 MIN_EFFICIENTIE = 0.60     # onder dit aandeel slaap is het geen slaapperiode
+WAKKER_MIN = 5             # korter dan dit midden in de slaap is omdraaien, geen ontwaken
 PIEK_EIS = 15.0            # ademhalingspiek moet 15x het gemiddelde vermogen zijn.
                            # Bij 4 kwam er 8,9/min uit, bij 15 werd het 13-14 met
                            # een spreiding van 0,2: die lage waarde was ruis, geen
@@ -381,7 +382,16 @@ def hrv_metrics(rr, runs=None):
 # ------------------------------------------------------------------ slaap
 
 def per_minute(motion):
-    """Bewegingsreeks (1 Hz) samenvatten tot activiteitstellingen per minuut."""
+    """
+    Bewegingsreeks (1 Hz) samenvatten tot activiteitstellingen per minuut.
+
+    Bewust de SOM, niet het aantal bewegende seconden. Dat laatste klinkt
+    dichter bij wat een actigraaf doet, maar op deze data valt de splitsing
+    dan uiteen: een derde van de minuten wordt exact nul en de drempelbepaling
+    gaat tussen "nul" en "de rest" zitten in plaats van tussen slaap en waak.
+    Losse bewegingspieken vangen we in plaats daarvan af bij de herscoring,
+    verderop in detect_sleep.
+    """
     buckets = {}
     for t, v in motion:
         buckets.setdefault(int(t // 60), []).append(v)
@@ -472,6 +482,27 @@ def detect_sleep(hr, motion, rhr):
         v = minuut_hr.get(m)
         low = (v < hr_thr) if v is not None else True
         asleep.append((m, quiet and low))
+
+    # Herscoring: korte wakkere onderbrekingen terugdraaien naar slaap.
+    # Je draait je 's nachts tien tot dertig keer om, en onze bewegingsmaat is
+    # de verandering van de zwaartekrachtvector - één draai geeft dus een forse
+    # uitslag. Zonder deze regel telt elke draai als een minuut wakker, en dat
+    # gaf 86 minuten "wakker" terwijl de hartslag in 85 daarvan gewoon slaap
+    # aangaf. Pas WAKKER_MIN opeenvolgende minuten geldt als echt ontwaken.
+    # Dit is de gedachte achter Webster's herscoringsregels bij actigrafie.
+    i = 0
+    while i < len(asleep):
+        if asleep[i][1]:
+            i += 1
+            continue
+        j = i
+        while j < len(asleep) and not asleep[j][1]:
+            j += 1
+        omringd = i > 0 and j < len(asleep)          # slaap ervoor en erna
+        if omringd and (j - i) < WAKKER_MIN:
+            for k in range(i, j):
+                asleep[k] = (asleep[k][0], True)
+        i = j
 
     # 1. aaneengesloten slaapruns.
     #    Let op de tweede voorwaarde: alleen minuten die er ook echt zijn tellen
