@@ -16,7 +16,9 @@ Adres wordt onthouden in ~/.whoop-tracker/alarm.json na de eerste keer.
 import argparse, asyncio, json, os, struct, sys
 from datetime import datetime, timedelta
 
-RESEARCH = os.path.expanduser("~/Desktop/whoop-research")
+RESEARCH = os.environ.get("WHOOP_RESEARCH") or os.path.expanduser("~/whoop-research")
+# Niet op je Desktop: macOS blokkeert die map voor achtergrondtaken (launchd),
+# waardoor een automatische sync stilzwijgend afbreekt op "Operation not permitted".
 sys.path.insert(0, RESEARCH)
 try:
     from research_playground import WhoopClient, Cmd, REVISION_1, PacketType

@@ -14,7 +14,9 @@ meesleurt - en zodat elke stap dezelfde code gebruikt die je los al draait.
 import argparse, asyncio, datetime as dt, json, os, shutil, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-RESEARCH = os.path.expanduser("~/Desktop/whoop-research")
+RESEARCH = os.environ.get("WHOOP_RESEARCH") or os.path.expanduser("~/whoop-research")
+# Niet op je Desktop: macOS blokkeert die map voor achtergrondtaken (launchd),
+# waardoor een automatische sync stilzwijgend afbreekt op "Operation not permitted".
 PLAYGROUND = os.path.join(RESEARCH, "research_playground.py")
 DB = os.path.join(RESEARCH, "whoop.db")
 STATE = os.path.expanduser("~/.whoop-tracker/alarm.json")

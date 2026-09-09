@@ -594,7 +594,8 @@ def render(parts):
 
 def main():
     ap = argparse.ArgumentParser(description="Bouw een HTML-rapport uit whoop.db")
-    ap.add_argument("db", nargs="?", default=os.path.expanduser("~/Desktop/whoop-research/whoop.db"))
+    ap.add_argument("db", nargs="?", default=os.path.join(os.environ.get("WHOOP_RESEARCH")
+                           or os.path.expanduser("~/whoop-research"), "whoop.db"))
     ap.add_argument("-o", "--out", default=None)
     a = ap.parse_args()
 

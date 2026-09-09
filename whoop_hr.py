@@ -16,7 +16,9 @@ Draaien via:  uv run --no-project --with bleak python whoop_hr.py services
 """
 import argparse, asyncio, json, os, sys
 
-RESEARCH = os.path.expanduser("~/Desktop/whoop-research")
+RESEARCH = os.environ.get("WHOOP_RESEARCH") or os.path.expanduser("~/whoop-research")
+# Niet op je Desktop: macOS blokkeert die map voor achtergrondtaken (launchd),
+# waardoor een automatische sync stilzwijgend afbreekt op "Operation not permitted".
 sys.path.insert(0, RESEARCH)
 from research_playground import WhoopClient, Cmd, REVISION_1, PacketType, \
                                 HR_SERVICE_UUID, HR_MEASUREMENT_UUID

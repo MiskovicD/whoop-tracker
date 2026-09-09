@@ -676,7 +676,8 @@ def bar(frac, width=28):
 
 def main():
     p = argparse.ArgumentParser(description="Trainingsbelasting, HRV, slaap en herstel uit whoop.db")
-    p.add_argument("db", nargs="?", default=os.path.expanduser("~/Desktop/whoop-research/whoop.db"))
+    p.add_argument("db", nargs="?", default=os.path.join(os.environ.get("WHOOP_RESEARCH")
+                           or os.path.expanduser("~/whoop-research"), "whoop.db"))
     p.add_argument("--age", type=int, help="voor geschatte HRmax (Gellish: 211 - 0.64 x leeftijd)")
     p.add_argument("--hrmax", type=float, help="gemeten HRmax - altijd beter dan een formule")
     p.add_argument("--rhr", type=float, help="rusthartslag; standaard uit de data")

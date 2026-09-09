@@ -28,17 +28,24 @@ bestaat niet in de data.
 - Een **Whoop 4.0** (5.0 werkt niet met deze scripts)
 - Een Mac met Bluetooth
 - [`uv`](https://docs.astral.sh/uv/) — `curl -LsSf https://astral.sh/uv/install.sh | sh`
-- Geen Whoop-abonnement, geen account
+- Geen Whoop-abonnement en geen Whoop-account (een account voor déze app
+  maak je zo aan, zie *De app op je telefoon*)
 
 ## Opzetten
 
 **1. De protocol-client van OpenStrap** (niet van ons, MIT-licentie):
 
 ```bash
-git clone https://github.com/OpenStrap/research.git ~/Desktop/whoop-research
+git clone https://github.com/OpenStrap/research.git ~/whoop-research
 ```
 
-Alle scripts hier verwachten hem op precies dat pad.
+Alle scripts hier verwachten hem op precies dat pad. Zet je hem ergens anders
+neer, geef dat dan mee met `WHOOP_RESEARCH=/pad/naar/research`.
+
+> **Niet op je Desktop.** macOS beschermt `~/Desktop`, `~/Documents` en
+> `~/Downloads` tegen processen zonder toestemming. Een achtergrondtaak breekt
+> daar af op `Operation not permitted` — zonder foutmelding die je ziet, want
+> hij komt niet eens tot het uitvoeren van het script.
 
 **2. Deze repo:**
 
@@ -53,7 +60,7 @@ dan is de accu leeg en werkt niets.
 **4. Zoek je band:**
 
 ```bash
-cd ~/Desktop/whoop-research
+cd ~/whoop-research
 uv run --no-project --with bleak python research_playground.py scan
 ```
 
@@ -87,8 +94,8 @@ Zonder Supabase erachter werkt alles behalve de laatste stap. Voor een rapport
 in je browser:
 
 ```bash
-python3 whoop_report.py ~/Desktop/whoop-research/whoop.db
-open ~/Desktop/whoop-research/whoop_report.html
+python3 whoop_report.py ~/whoop-research/whoop.db
+open ~/whoop-research/whoop_report.html
 ```
 
 ## Twee dingen die je moet weten
@@ -119,10 +126,37 @@ https://miskovicd.github.io/E-portfolio/whoop-tracker/app/
 
 Deelknop → *Zet op beginscherm*. Let op de hoofdletter E in de URL.
 
-De app leest uit Supabase, dus je hebt een account nodig in hetzelfde project.
-Vraag daarom. Wil je je gegevens liever gescheiden houden, maak dan een eigen
-gratis Supabase-project aan, draai `supabase-schema.sql` en pas `SB_URL` en
-`SB_ANON` aan in `app/index.html` en `whoop_push.py`.
+De eerste keer krijg je een inlogscherm. Tik op **Account maken**, vul een
+e-mailadres en wachtwoord in, en je bent binnen — er komt geen bevestigingsmail
+aan te pas. Vergeten? *Wachtwoord vergeten?* stuurt je een herstel-link.
+
+Daarna log je op je Mac één keer in met dezelfde gegevens, zodat je band zijn
+metingen naar jóuw account stuurt. Dat vraagt `whoop_update.py` vanzelf de
+eerste keer; alleen de refresh-token blijft achter in
+`~/.whoop-tracker/session.json`, nooit je wachtwoord.
+
+**Over gedeelde opslag:** iedereen zit in hetzelfde Supabase-project, maar
+row level security staat aan — de database geeft je alleen rijen terug waar
+`user_id` gelijk is aan jouw eigen id. Je ziet dus niemand anders, en niemand
+anders ziet jou. Wil je het toch volledig op jezelf hebben, maak dan een eigen
+gratis Supabase-project aan, draai `supabase-schema.sql` in de SQL Editor en pas
+`SB_URL` en `SB_ANON` aan in `app/index.html` en `whoop_push.py`.
+
+## Elk uur automatisch, zonder eraan te denken
+
+```bash
+./whoop_auto.sh install 23
+```
+
+Vanaf dan probeert je Mac elk uur je band leeg te trekken. Ligt hij buiten
+bereik, dan mislukt die ronde stil en gaat het een uur later opnieuw. Zo loopt
+je achterstand nooit op en hoef je nooit een commando te typen.
+
+| Commando | Wat het doet |
+|---|---|
+| `./whoop_auto.sh install <leeftijd>` | aanzetten (elk uur) |
+| `./whoop_auto.sh log` | laatste regels bekijken |
+| `./whoop_auto.sh uninstall` | weer uitzetten |
 
 ## Bijwerken
 

@@ -39,10 +39,14 @@ def anon_key():
     global SB_ANON
     if SB_ANON:
         return SB_ANON
-    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    for rel in ("finance-tracker/index.html", "nyp-tracker/index.html",
-                "uren-tracker/index.html"):
-        path = os.path.join(here, rel)
+    # Eerst onze eigen app. Zet je dit op je eigen Supabase-project, dan pas je
+    # die aan - en dan mag de sleutel van een buur-app hem niet overrulen.
+    mijn = os.path.dirname(os.path.abspath(__file__))
+    naast = os.path.dirname(mijn)
+    for path in [os.path.join(mijn, "app", "index.html")] + [
+            os.path.join(naast, rel) for rel in
+            ("finance-tracker/index.html", "nyp-tracker/index.html",
+             "uren-tracker/index.html")]:
         if not os.path.exists(path):
             continue
         for line in open(path, encoding="utf-8", errors="ignore"):
@@ -77,20 +81,21 @@ def save_state(s):
     os.chmod(STATE, stat.S_IRUSR | stat.S_IWUSR)      # alleen jij mag erbij
 
 
-PROJECT = SB_URL.split("//")[1].split(".")[0]
-DASHBOARD = "https://supabase.com/dashboard/project/%s/auth/users" % PROJECT
+APP_URL = "https://miskovicd.github.io/E-portfolio/whoop-tracker/app/"
 
 
 def login(pogingen=3):
     """
     Vraagt e-mail en wachtwoord lokaal; bewaart alleen de refresh-token.
 
-    Let op: dit is NIET je supabase.com-login (die via GitHub gaat), maar een
-    gebruiker binnen dit project - hetzelfde account als in je andere apps.
+    Let op: dit is NIET je supabase.com-login (die via GitHub gaat), maar het
+    account dat je in de telefoon-app hebt aangemaakt.
     """
-    print("Eenmalig inloggen op Supabase.")
-    print("Let op: niet je supabase.com-account, maar de gebruiker uit je")
-    print("uren- en finance-app (e-mail + wachtwoord).\n")
+    print("Eenmalig inloggen.")
+    print("Gebruik het account dat je in de app hebt aangemaakt")
+    print("(e-mail + wachtwoord), niet je supabase.com-account.")
+    print("Nog geen account? Maak er een via 'Account maken' in de app:")
+    print("%s\n" % APP_URL)
 
     for poging in range(1, pogingen + 1):
         email = input("  e-mail: ").strip()
@@ -106,10 +111,9 @@ def login(pogingen=3):
                 if rest:
                     print("  Nog %d poging%s.\n" % (rest, "en" if rest > 1 else ""))
                     continue
-                print("\n  Controleer of de gebruiker bestaat, of zet een nieuw wachtwoord:")
-                print("  %s\n" % DASHBOARD)
-                print("  Daar log je wel met GitHub in. Bestaat er nog geen gebruiker,")
-                print("  maak er dan een aan met 'Add user'.")
+                print("\n  Maak eerst een account aan in de app, of zet daar een")
+                print("  nieuw wachtwoord via 'Wachtwoord vergeten?':")
+                print("  %s\n" % APP_URL)
                 sys.exit(1)
             raise
 
@@ -296,7 +300,8 @@ def build_row(day, recs, user_id, hrmax, sex, trimp_ref, baseline,
 
 def main():
     p = argparse.ArgumentParser(description="Zet je Whoop-metrics in Supabase")
-    p.add_argument("db", nargs="?", default=os.path.expanduser("~/Desktop/whoop-research/whoop.db"))
+    p.add_argument("db", nargs="?", default=os.path.join(os.environ.get("WHOOP_RESEARCH")
+                           or os.path.expanduser("~/whoop-research"), "whoop.db"))
     p.add_argument("--age", type=int)
     p.add_argument("--hrmax", type=float)
     p.add_argument("--sex", choices=["m", "v"], default="m")
