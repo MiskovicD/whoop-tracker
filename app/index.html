@@ -107,6 +107,12 @@ input:focus{outline:none;border-color:var(--blue)}
 .primary{background:var(--ink);color:#000;border-radius:11px;padding:13px;
   font-weight:600;text-align:center}
 .err{color:var(--red);font-size:13.5px;min-height:19px}
+.err.ok{color:var(--green)}
+.swap{display:flex;gap:6px;margin:0 0 14px}
+.swap button{flex:1;padding:9px;border-radius:9px;background:var(--card2);
+  border:1px solid var(--line);font-size:13px;color:var(--muted)}
+.swap button.on{background:var(--ink);color:#000;border-color:var(--ink);font-weight:600}
+.link{font-size:12.5px;color:var(--muted);text-decoration:underline;margin:11px 0 0;display:block;text-align:center}
 .hide{display:none}
 .center{text-align:center;color:var(--muted);padding:36px 12px;font-size:14.5px}
 .out{text-align:center;margin-top:18px}
@@ -119,7 +125,11 @@ input:focus{outline:none;border-color:var(--blue)}
   <div id="vLogin" class="hide">
     <div class="top"><div class="mono">W</div></div>
     <div class="card">
-      <h3>INLOGGEN</h3>
+      <h3 id="authKop">INLOGGEN</h3>
+      <div class="swap">
+        <button id="tabIn" class="on" type="button">Inloggen</button>
+        <button id="tabReg" type="button">Account maken</button>
+      </div>
       <form id="loginForm" method="post" action="#" autocomplete="on">
         <input id="email" name="email" type="email" placeholder="e-mail"
                autocomplete="username" inputmode="email" autocapitalize="none"
@@ -127,10 +137,10 @@ input:focus{outline:none;border-color:var(--blue)}
         <input id="password" name="password" type="password" placeholder="wachtwoord"
                autocomplete="current-password" required>
         <div class="err" id="loginErr"></div>
-        <button class="primary" type="submit">Inloggen</button>
+        <button class="primary" type="submit" id="authBtn">Inloggen</button>
       </form>
-      <p class="note">Zelfde account als je uren- en finance-app. Je Mac zet de metrics
-        in Supabase; deze app leest ze alleen.</p>
+      <a class="link" id="forgot" href="#">Wachtwoord vergeten?</a>
+      <p class="note" id="authNote"></p>
     </div>
   </div>
 
@@ -150,6 +160,21 @@ input:focus{outline:none;border-color:var(--blue)}
     <div class="out"><button id="btnOut">UITLOGGEN</button></div>
   </div>
 
+  <div id="vReset" class="hide">
+    <div class="top"><div class="mono">W</div></div>
+    <div class="card">
+      <h3>NIEUW WACHTWOORD</h3>
+      <form id="resetForm" method="post" action="#">
+        <input id="np1" type="password" placeholder="nieuw wachtwoord"
+               autocomplete="new-password" required>
+        <input id="np2" type="password" placeholder="nogmaals"
+               autocomplete="new-password" required>
+        <div class="err" id="resetErr"></div>
+        <button class="primary" type="submit">Opslaan</button>
+      </form>
+    </div>
+  </div>
+
   <div id="vLoad" class="center">Laden&hellip;</div>
 </div>
 
@@ -163,7 +188,7 @@ let session = null, rows = [], idx = 0, tab = "over";
 try { session = JSON.parse(localStorage.getItem(KEY) || "null"); } catch(e){}
 
 const $ = s => document.querySelector(s);
-const show = id => ["vLogin","vApp","vLoad"].forEach(v =>
+const show = id => ["vLogin","vApp","vLoad","vReset"].forEach(v =>
   $("#"+v).classList.toggle("hide", v !== id));
 const saveSession = s => { session = s; try{ localStorage.setItem(KEY, JSON.stringify(s)); }catch(e){} };
 const clearSession = () => { session = null; try{ localStorage.removeItem(KEY); }catch(e){} };
@@ -175,7 +200,8 @@ async function refreshSession(){
     body: JSON.stringify({refresh_token: session.refresh_token})});
   if(!r.ok) throw new Error("sessie verlopen");
   const d = await r.json();
-  saveSession({access_token:d.access_token, refresh_token:d.refresh_token, user_id:d.user.id});
+  saveSession({access_token:d.access_token, refresh_token:d.refresh_token,
+               user_id:d.user.id, email:d.user.email});
 }
 
 async function api(path){
@@ -307,7 +333,14 @@ function advies(d, slaapPct){
 function render(){
   if(!rows.length){
     $("#body").innerHTML = `<div class="card"><div class="center">Nog geen gegevens.<br><br>
-      Draai op je Mac:<br><code style="color:var(--ink);font-size:12.5px">python3 whoop_push.py --age 23</code>
+      Draag je band, en draai daarna op je Mac in <code>whoop-tracker/</code>:<br><br>
+      <code style="color:var(--ink);font-size:12px;line-height:1.7">uv run --no-project --with bleak python&nbsp;whoop_update.py --age&nbsp;JOUWLEEFTIJD --drain --quick --save-daily</code>
+      <br><br>De eerste keer vraagt hij om het e-mailadres en wachtwoord
+      waarmee je hier bent ingelogd.
+      <div style="margin-top:20px;padding-top:14px;border-top:1px solid var(--line);
+                  font-size:13px">Je kijkt nu als
+        <b style="color:var(--ink)">${(session && session.email) || "onbekend account"}</b>.<br>
+        Stuurt je Mac naar een ander account, dan blijft dit scherm leeg.</div>
       </div></div>`;
     return;
   }
@@ -437,13 +470,35 @@ function render(){
 
 /* ---------- start ---------- */
 
+// Sessies van voor deze versie hebben geen e-mail opgeslagen. Zonder dat kan de
+// lege staat niet zeggen onder welk account je kijkt, en dat is juist de enige
+// verklaring die klopt als je Mac wel pusht maar er niets verschijnt.
+async function vulEmailAan(){
+  if(!session || session.email) return;
+  try{
+    const r = await fetch(SB_URL + "/auth/v1/user",
+      {headers:{apikey:SB_ANON, Authorization:"Bearer " + session.access_token}});
+    if(!r.ok) return;
+    const u = await r.json();
+    if(u && u.email) saveSession(Object.assign({}, session, {email:u.email}));
+  }catch(e){}
+}
+
 async function loadData(){
   rows = await api("/whoop_days?select=*&order=day.desc&limit=30");
+  if(!rows.length) await vulEmailAan();
   idx = 0; render(); show("vApp");
 }
 
 async function boot(){
   show("vLoad");
+  // Kom je binnen via een herstel-link, dan eerst een nieuw wachtwoord kiezen.
+  const ht = hashTokens();
+  if(ht.type === "recovery" && ht.access_token){
+    herstel = ht;
+    history.replaceState(null, "", location.pathname);   // tokens uit de URL halen
+    show("vReset"); return;
+  }
   if(!session){ show("vLogin"); return; }
   try { await loadData(); }
   catch(e){
@@ -455,21 +510,114 @@ async function boot(){
   }
 }
 
+/* ---------- inloggen, registreren, herstellen ---------- */
+
+let modus = "in";                 // "in" = inloggen, "reg" = account maken
+let herstel = null;               // tokens uit een herstel-link
+
+const setErr = (m, ok) => {
+  const el = $("#loginErr"); el.textContent = m || ""; el.classList.toggle("ok", !!ok);
+};
+
+function zetModus(m){
+  modus = m;
+  $("#tabIn").classList.toggle("on", m === "in");
+  $("#tabReg").classList.toggle("on", m === "reg");
+  $("#authKop").textContent = m === "in" ? "INLOGGEN" : "ACCOUNT MAKEN";
+  $("#authBtn").textContent = m === "in" ? "Inloggen" : "Account maken";
+  // Safari biedt alleen een nieuw wachtwoord aan als het veld dat ook zegt.
+  $("#password").setAttribute("autocomplete", m === "in" ? "current-password" : "new-password");
+  $("#forgot").classList.toggle("hide", m === "reg");
+  $("#authNote").innerHTML = m === "in"
+    ? `Heb je hier nog geen account, tik dan op <b style="color:var(--ink)">Account maken</b>.
+       Je Mac zet de metingen in Supabase; deze app leest ze alleen.`
+    : `Je maakt een eigen account aan. Alleen jij ziet je eigen metingen &mdash; ook al
+       delen we hetzelfde project. Daarna log je op je Mac in met dezelfde gegevens,
+       zodat je band zijn data naar jouw account stuurt.`;
+  setErr("");
+}
+$("#tabIn").addEventListener("click", () => zetModus("in"));
+$("#tabReg").addEventListener("click", () => zetModus("reg"));
+zetModus("in");
+
+// Supabase geeft zijn reden mee in wisselende velden; pak wat er is.
+async function authFout(r){
+  const d = await r.json().catch(() => ({}));
+  return d.error_description || d.msg || d.error || d.message || "";
+}
+
 $("#loginForm").addEventListener("submit", async ev => {
-  ev.preventDefault(); $("#loginErr").textContent = "";
+  ev.preventDefault(); setErr("");
+  const email = $("#email").value.trim(), pw = $("#password").value;
+  if(modus === "reg" && pw.length < 6){ setErr("Kies minstens 6 tekens"); return; }
+  $("#authBtn").style.opacity = ".5";
   try{
-    const r = await fetch(SB_URL+"/auth/v1/token?grant_type=password", {
+    const pad = modus === "in" ? "/auth/v1/token?grant_type=password" : "/auth/v1/signup";
+    const r = await fetch(SB_URL + pad, {
       method:"POST", headers:{apikey:SB_ANON,"Content-Type":"application/json"},
-      body: JSON.stringify({email:$("#email").value.trim(), password:$("#password").value})});
-    if(!r.ok) throw new Error("Inloggen mislukt");
+      body: JSON.stringify({email, password: pw})});
+    if(!r.ok) throw new Error(await authFout(r) ||
+      (modus === "in" ? "Inloggen mislukt" : "Registreren mislukt"));
     const d = await r.json();
-    saveSession({access_token:d.access_token, refresh_token:d.refresh_token, user_id:d.user.id});
+    // Staat e-mailbevestiging aan in Supabase, dan komt er geen token terug:
+    // dan is het account er wel, maar moet de mail eerst bevestigd worden.
+    if(!d.access_token){
+      zetModus("in");
+      setErr("Account aangemaakt. Bevestig eerst de mail, dan kun je inloggen.", true);
+      return;
+    }
+    saveSession({access_token:d.access_token, refresh_token:d.refresh_token,
+                 user_id:(d.user||d).id, email:(d.user||d).email});
     // Het wachtwoordveld NIET meteen leegmaken: Safari en de Wachtwoorden-app
     // bieden pas aan om op te slaan nadat ze een geslaagde inzending zien, en
     // een veld dat al leeg is telt niet mee. Leegmaken gebeurt bij uitloggen.
     try { await loadData(); }
     catch(e2){ if(e2.status) toonFout(e2); else throw e2; }
-  }catch(e){ $("#loginErr").textContent = e.message; }
+  }catch(e){ setErr(e.message); }
+  $("#authBtn").style.opacity = "";
+});
+
+$("#forgot").addEventListener("click", async ev => {
+  ev.preventDefault();
+  const email = $("#email").value.trim();
+  if(!email){ setErr("Vul eerst je e-mailadres in"); $("#email").focus(); return; }
+  setErr("Bezig\u2026");
+  try{
+    const terug = location.origin + location.pathname;
+    const r = await fetch(SB_URL + "/auth/v1/recover?redirect_to=" + encodeURIComponent(terug), {
+      method:"POST", headers:{apikey:SB_ANON,"Content-Type":"application/json"},
+      body: JSON.stringify({email})});
+    if(!r.ok) throw new Error(await authFout(r) || "Versturen mislukt");
+    setErr("Check je mail voor de herstel-link.", true);
+  }catch(e){ setErr(e.message); }
+});
+
+// Supabase stuurt de herstel-tokens terug in de URL-hash.
+function hashTokens(){
+  const p = new URLSearchParams((location.hash || "").replace(/^#/, ""));
+  return {access_token:p.get("access_token"), refresh_token:p.get("refresh_token"),
+          type:p.get("type")};
+}
+
+$("#resetForm").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const a = $("#np1").value, b = $("#np2").value;
+  const el = $("#resetErr"); el.classList.remove("ok");
+  if(a.length < 6){ el.textContent = "Kies minstens 6 tekens"; return; }
+  if(a !== b){ el.textContent = "De wachtwoorden komen niet overeen"; return; }
+  el.textContent = "Bezig\u2026";
+  try{
+    const r = await fetch(SB_URL + "/auth/v1/user", {
+      method:"PUT", headers:{apikey:SB_ANON, "Content-Type":"application/json",
+        Authorization:"Bearer " + herstel.access_token},
+      body: JSON.stringify({password:a})});
+    if(!r.ok) throw new Error(await authFout(r) || "Wijzigen mislukt");
+    const u = await r.json();
+    saveSession({access_token:herstel.access_token, refresh_token:herstel.refresh_token,
+                 user_id:u.id, email:u.email});
+    herstel = null; $("#np1").value = ""; $("#np2").value = ""; el.textContent = "";
+    await loadData();
+  }catch(e){ el.textContent = e.message; }
 });
 
 $("#prev").addEventListener("click", () => { if(idx < rows.length-1){ idx++; render(); }});
