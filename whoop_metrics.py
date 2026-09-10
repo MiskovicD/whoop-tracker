@@ -12,7 +12,7 @@ Alle formules zijn gepubliceerd en na te slaan - geen black box:
     python3 whoop_metrics.py --age 23
     python3 whoop_metrics.py --hrmax 191 --save-daily
 """
-import argparse, json, math, os, statistics, sys
+import argparse, json, math, os, statistics, sys, tempfile
 from datetime import datetime, timezone, time as dt_time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -20,7 +20,14 @@ from whoop_report import (load, sessions, series, rmssd, sdnn,
                           fmt_dur, fmt_t, resting_hr, laatste_met_hr,
                           nacht_venster)
 
-BASELINE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "baseline.json")
+# Tot 2026-09-10 stond dit bestand naast het script. Gevolg: elke verhuizing
+# van de code zette je baseline op nul, en onder 7 dagen weigert de herstelscore
+# een getal - dus die bleef altijd leeg zonder dat iets erover klaagde. Hij
+# staat nu bij je andere staat, naast session.json en auto.conf, en een oude
+# baseline naast het script wordt eenmalig meegenomen.
+STATE_DIR = os.path.expanduser("~/.whoop-tracker")
+BASELINE = os.path.join(STATE_DIR, "baseline.json")
+BASELINE_OUD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "baseline.json")
 MIN_BASELINE_DAYS = 7      # onder dit aantal is een z-score betekenisloos
 MERGE_GAP = 30             # minuten: korte ontwaking breekt de nacht niet
 MIN_SLEEP_MIN = 45         # minder dan dit is geen slaapperiode
@@ -566,14 +573,43 @@ def detect_sleep(hr, motion, rhr):
 
 # --------------------------------------------------------------- baseline
 
-def load_baseline():
-    if os.path.exists(BASELINE):
+def _lees_baseline(pad):
+    if os.path.exists(pad):
         try:
-            with open(BASELINE) as f:
-                return json.load(f)
+            with open(pad) as f:
+                d = json.load(f)
+            if isinstance(d.get("days"), dict):
+                return d
         except ValueError:
             pass
     return {"days": {}}
+
+
+def _schrijf_baseline(bl):
+    """Atomair, want een lopende sync kan tegelijk meelezen."""
+    os.makedirs(STATE_DIR, exist_ok=True)
+    tmp = tempfile.NamedTemporaryFile("w", dir=STATE_DIR, delete=False)
+    try:
+        json.dump(bl, tmp, indent=1, sort_keys=True)
+        tmp.close()
+        os.replace(tmp.name, BASELINE)
+    except BaseException:
+        os.unlink(tmp.name)
+        raise
+
+
+def load_baseline():
+    bl = _lees_baseline(BASELINE)
+    oud = _lees_baseline(BASELINE_OUD)
+    if oud["days"]:
+        # Samenvoegen in plaats van vervangen: dagen die alleen in de oude
+        # staan zijn net zo geldig. Bij dubbele dagen wint de nieuwe.
+        samen = dict(oud["days"])
+        samen.update(bl["days"])
+        if len(samen) > len(bl["days"]):
+            bl["days"] = samen
+            _schrijf_baseline(bl)
+    return bl
 
 
 def save_daily(bl, day, ln_rmssd=None, rhr=None, sleep_min=None, trimp=None,
@@ -584,8 +620,7 @@ def save_daily(bl, day, ln_rmssd=None, rhr=None, sleep_min=None, trimp=None,
                  ("stress_rmssd", stress_rmssd), ("gevoel", gevoel), ("trimp", trimp)):
         if v is not None:
             e[k] = v
-    with open(BASELINE, "w") as f:
-        json.dump(bl, f, indent=1, sort_keys=True)
+    _schrijf_baseline(bl)
     return len(bl["days"])
 
 
