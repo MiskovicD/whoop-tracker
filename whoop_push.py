@@ -81,7 +81,7 @@ def save_state(s):
     os.chmod(STATE, stat.S_IRUSR | stat.S_IWUSR)      # alleen jij mag erbij
 
 
-APP_URL = "https://miskovicd.github.io/E-portfolio/whoop-tracker/app/"
+APP_URL = "https://miskovicd.github.io/whoop-tracker/app/"
 
 
 def login(pogingen=3):

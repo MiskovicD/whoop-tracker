@@ -50,8 +50,8 @@ neer, geef dat dan mee met `WHOOP_RESEARCH=/pad/naar/research`.
 **2. Deze repo:**
 
 ```bash
-git clone https://github.com/MiskovicD/E-portfolio.git
-cd E-portfolio/whoop-tracker
+git clone https://github.com/MiskovicD/whoop-tracker.git
+cd whoop-tracker
 ```
 
 **3. Zet je band aan de lader** tot hij weer knippert. Ligt hij al maanden stil,
@@ -121,10 +121,10 @@ van tien seconden.
 Open in **Safari** (niet Chrome — op iOS mag alleen Safari een PWA installeren):
 
 ```
-https://miskovicd.github.io/E-portfolio/whoop-tracker/app/
+https://miskovicd.github.io/whoop-tracker/app/
 ```
 
-Deelknop → *Zet op beginscherm*. Let op de hoofdletter E in de URL.
+Deelknop → *Zet op beginscherm*.
 
 De eerste keer krijg je een inlogscherm. Tik op **Account maken**, vul een
 e-mailadres en wachtwoord in, en je bent binnen — er komt geen bevestigingsmail
