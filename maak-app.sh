@@ -9,6 +9,24 @@ set -eu
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 APP="$HOME/Applications/Whoop.app"
+
+# macOS schermt ~/Desktop, ~/Documents en ~/Downloads af. Een app-bundel is
+# niet gesigneerd, dus het systeem kan de toegang niet aan iets toerekenen en
+# weigert zonder te vragen: de app start, kan zijn eigen script niet lezen en
+# sluit meteen weer. Van buiten lijkt dat op "hij opent niet".
+case "$HERE/" in
+  "$HOME"/Desktop/*|"$HOME"/Documents/*|"$HOME"/Downloads/*)
+    echo "Deze map is door macOS afgeschermd:" >&2
+    echo "  $HERE" >&2
+    echo >&2
+    echo "Een app die hier vandaan start kan zijn eigen bestanden niet lezen" >&2
+    echo "(Errno 1, Operation not permitted) en sluit meteen weer." >&2
+    echo >&2
+    echo "Zet de checkout ergens buiten die mappen, bijvoorbeeld:" >&2
+    echo "  git clone https://github.com/MiskovicD/whoop-tracker.git ~/whoop-tracker" >&2
+    echo "en draai dit script daar opnieuw." >&2
+    exit 1 ;;
+esac
 PY="$(command -v python3 || echo /usr/bin/python3)"
 
 rm -rf "$APP"
