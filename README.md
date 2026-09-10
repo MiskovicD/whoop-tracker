@@ -142,6 +142,37 @@ anders ziet jou. Wil je het toch volledig op jezelf hebben, maak dan een eigen
 gratis Supabase-project aan, draai `supabase-schema.sql` in de SQL Editor en pas
 `SB_URL` en `SB_ANON` aan in `app/index.html` en `whoop_push.py`.
 
+## Met een knop, zonder terminal
+
+```bash
+./maak-app.sh
+```
+
+Dat zet **Whoop.app** in `~/Applications`. Te vinden in Launchpad, te slepen
+naar je Dock. Openen, op *Leegtrekken* klikken, klaar: je ziet hoe ver je
+achterloopt, de accustand van je band, en de rondes komen live voorbij.
+
+De app is een dun laagje. De knop start `whoop_auto.sh inhalen`, dus de
+vergrendeling, de bewaker, `caffeinate` en het versturen naar Supabase zitten
+er automatisch in - precies dezelfde weg als de uursync. Loopt die op dat
+moment, dan zegt de knop dat en wacht hij netjes.
+
+Werkt ook zonder de app-bundel:
+
+```bash
+python3 whoop_app.py
+```
+
+> Het is een venster in je browser, geen echt Mac-venster. De Tk die bij
+> Apple's Python zit is te oud voor macOS 15 en valt om met
+> `macOS 15 (1507) or later required`. Een pagina op `localhost` werkt met
+> alleen de standaardbibliotheek, dus zonder installatie. Sluit je het
+> tabblad, dan stopt het programma zichzelf na anderhalve minuut.
+
+Vraagt macOS bij de eerste keer toegang tot je bureaublad, dan komt dat
+doordat de scripts daar staan. Toestaan, of zet de checkout ergens buiten
+`~/Desktop`.
+
 ## Elk uur automatisch, zonder eraan te denken
 
 ```bash
