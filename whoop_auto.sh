@@ -18,8 +18,10 @@ DIR="$HOME/.whoop-tracker"
 LOG="$DIR/auto.log"
 LOCK="$DIR/auto.lock"
 CONF="$DIR/auto.conf"
+DB="${WHOOP_RESEARCH:-$HOME/whoop-research}/whoop.db"
 LABEL="whoop-auto"
-MAXDUUR=1500     # seconden; een volle ronde van 12 duurt ~10 min, dus 25 is ruim
+STIL_MAX=1200    # geen byte naar whoop.db in 20 min = echt vastgelopen
+ABSOLUUT_MAX=14400   # laatste noodrem: vier uur
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
 export PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
@@ -158,11 +160,14 @@ trap 'rm -rf "$LOCK" 2>/dev/null' EXIT
 
 log "start"
 
-# Harde tijdslimiet op de hele ronde. Zonder dit blijft een BLE-aanroep die na
-# een slaapstand niet terugkeert eeuwig hangen: research_playground negeert dan
-# zijn eigen --timeout, de vergrendeling blijft staan, en launchd start geen
-# tweede exemplaar zolang de eerste "draait". Op 7 september kostte dat drie
-# dagen sync zonder een enkele foutmelding.
+# Noodrem voor een ronde die niet meer terugkomt. Zonder dit blijft een
+# BLE-aanroep die een slaapstand niet overleeft eeuwig hangen: de vergrendeling
+# blijft staan en launchd start geen tweede exemplaar zolang de eerste "draait".
+# Op 7 september kostte dat drie dagen sync zonder een enkele foutmelding.
+#
+# Meten op de klok werkte niet: op 9 september sloeg een limiet van 25 minuten
+# een ronde af die nog volop data ophaalde. Daarom kijkt hij nu naar voortgang -
+# groeit whoop.db nog, dan mag hij doorgaan, hoe lang het ook duurt.
 UITBESTAND="$DIR/auto.run.$$"
 
 if [ "$VOORGROND" = 1 ]; then
@@ -170,7 +175,11 @@ if [ "$VOORGROND" = 1 ]; then
   # ruimt de sync-client op. De vergrendeling gaat weg via de EXIT-trap.
   echo "Inhaalslag, hoogstens $RONDES rondes. Ctrl-C om te stoppen;"
   echo "alles wat binnen is blijft staan."
-  uv run --no-project --with bleak python "$HERE/whoop_update.py" \
+  # Door de pijp naar tee is stdout geen terminal meer, en dan buffert Python
+  # per blok: je ziet minuten niets en dan alles in een keer. Dit zet dat uit,
+  # ook voor de scripts die whoop_update zelf start.
+  PYTHONUNBUFFERED=1 \
+  uv run --no-project --with bleak python -u "$HERE/whoop_update.py" \
           --age "$LEEFTIJD" --drain --quick --save-daily --rondes "$RONDES" 2>&1 \
     | tee "$UITBESTAND"
   CODE=${PIPESTATUS[0]}
@@ -183,14 +192,19 @@ uv run --no-project --with bleak python "$HERE/whoop_update.py" \
 KIND=$!
 set +m                                   # kinderen in een keer kunnen stoppen
 (
-  # shellcheck disable=SC2034
-  for _ in $(seq 1 "$MAXDUUR"); do
-    kill -0 "$KIND" 2>/dev/null || exit 0
-    sleep 1
+  laatst=$(stat -f %m "$DB" 2>/dev/null || echo 0)
+  stil=0; totaal=0
+  while kill -0 "$KIND" 2>/dev/null; do
+    sleep 15; totaal=$((totaal + 15))
+    nu=$(stat -f %m "$DB" 2>/dev/null || echo 0)
+    if [ "$nu" != "$laatst" ]; then laatst=$nu; stil=0; else stil=$((stil + 15)); fi
+    if [ "$stil" -ge "$STIL_MAX" ] || [ "$totaal" -ge "$ABSOLUUT_MAX" ]; then
+      kill -TERM -"$KIND" 2>/dev/null || kill -TERM "$KIND" 2>/dev/null
+      sleep 10
+      kill -KILL -"$KIND" 2>/dev/null || kill -KILL "$KIND" 2>/dev/null
+      exit 0
+    fi
   done
-  kill -TERM -"$KIND" 2>/dev/null || kill -TERM "$KIND" 2>/dev/null
-  sleep 10
-  kill -KILL -"$KIND" 2>/dev/null || kill -KILL "$KIND" 2>/dev/null
 ) &
 BEWAKER=$!
 
@@ -207,7 +221,8 @@ if [ $CODE -ne 0 ]; then
   case $CODE in
     126) log "mislukt (126) - macOS blokkeert de toegang tot deze map; draai: $0 install <leeftijd>" ;;
     134) log "mislukt (134) - Bluetooth geweigerd (SIGABRT), geen bereikprobleem" ;;
-    143|137) log "afgebroken na $((MAXDUUR / 60)) min - de sync liep vast, waarschijnlijk een slaapstand middenin" ;;
+    130) log "afgebroken met Ctrl-C" ;;
+    143|137) log "afgebroken: $((STIL_MAX / 60)) min geen nieuwe data - de sync liep vast" ;;
       *) log "mislukt (code $CODE) - waarschijnlijk band buiten bereik; volgende ronde opnieuw" ;;
   esac
 fi
