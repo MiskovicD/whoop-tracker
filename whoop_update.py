@@ -19,15 +19,15 @@ RESEARCH = os.environ.get("WHOOP_RESEARCH") or os.path.expanduser("~/whoop-resea
 # waardoor een automatische sync stilzwijgend afbreekt op "Operation not permitted".
 PLAYGROUND = os.path.join(RESEARCH, "research_playground.py")
 DB = os.path.join(RESEARCH, "whoop.db")
-STATE = os.path.expanduser("~/.whoop-tracker/alarm.json")
+import whoop_config
+
+# Adres, leeftijd en slaapdoel staan in ~/.whoop-tracker/config.json, niet
+# langer verspreid over alarm.json en auto.conf.
 BATTERY_UUID = "00002a19-0000-1000-8000-00805f9b34fb"
 
 
 def adres():
-    try:
-        return json.load(open(STATE)).get("address")
-    except Exception:
-        return None
+    return whoop_config.adres()
 
 
 def stap(nr, tekst):
@@ -67,8 +67,15 @@ def main():
     p.add_argument("--address", "-a", default=None)
     a = p.parse_args()
 
+    # Niets meegegeven? Dan pakken we wat er in je instellingen staat, zodat
+    # niemand elke keer zijn leeftijd hoeft te typen - en de app en de uursync
+    # hem niet hoeven door te geven.
     if not (a.age or a.hrmax):
-        sys.exit("geef --age of --hrmax mee")
+        cfg = whoop_config.laad()
+        a.age, a.hrmax = cfg.get("age"), cfg.get("hrmax")
+    if not (a.age or a.hrmax):
+        sys.exit("Geen leeftijd of maximale hartslag bekend.\n"
+                 "Zet die eenmalig in de app (Whoop.app), of geef --age mee.")
     if not os.path.exists(PLAYGROUND):
         sys.exit("research_playground.py niet gevonden in %s" % RESEARCH)
 

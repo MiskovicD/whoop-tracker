@@ -6,7 +6,7 @@
 # achterstand loopt nooit op. Trek je dagelijks leeg, dan is het één ronde van
 # tien seconden in plaats van twintig rondes na een week.
 #
-#   ./whoop_auto.sh install 23    eenmalig aanzetten, met je leeftijd
+#   ./whoop_auto.sh install       eenmalig aanzetten (leeftijd komt uit de app)
 #   ./whoop_auto.sh uninstall     weer uitzetten
 #   ./whoop_auto.sh inhalen       lange inhaalslag, jij kijkt mee (Ctrl-C stopt)
 #   ./whoop_auto.sh log           laatste regels bekijken
@@ -14,11 +14,15 @@
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-DIR="$HOME/.whoop-tracker"
+# WHOOP_STATE bestaat om te testen met een schone staat; leeg laten voor
+# normaal gebruik. Moet gelijk zijn aan wat whoop_config gebruikt, anders
+# pakken de app en dit script een andere vergrendeling.
+DIR="${WHOOP_STATE:-$HOME/.whoop-tracker}"
 LOG="$DIR/auto.log"
 LOCK="$DIR/auto.lock"
 CONF="$DIR/auto.conf"
 DB="${WHOOP_RESEARCH:-$HOME/whoop-research}/whoop.db"
+PYTHON="$(command -v python3 || echo /usr/bin/python3)"
 LABEL="whoop-auto"
 STIL_MAX=1200    # geen byte naar whoop.db in 20 min = echt vastgelopen
 ABSOLUUT_MAX=14400   # laatste noodrem: vier uur
@@ -31,13 +35,22 @@ log() { echo "$(date '+%Y-%m-%d %H:%M:%S')  $*" >> "$LOG"; }
 
 case "${1:-run}" in
 install)
-  LEEFTIJD="${2:-}"
-  # De leeftijd bepaalt je geschatte maximale hartslag, en daarmee je belasting.
-  # Zonder dat getal is de belastingscore verzonnen, dus vragen we hem hier.
-  case "$LEEFTIJD" in
-    ''|*[!0-9]*) echo "Gebruik: $0 install <leeftijd>   (bijvoorbeeld: $0 install 23)"; exit 1 ;;
-  esac
-  echo "LEEFTIJD=$LEEFTIJD" > "$CONF"
+  # De leeftijd bepaalt je geschatte maximale hartslag, en daarmee je
+  # belastingscore. Hij hoort bij je instellingen, niet bij dit script: staat
+  # hij al in config.json (via de app), dan hoef je hier niets mee te geven.
+  if [ -n "${2:-}" ]; then
+    case "$2" in
+      *[!0-9]*) echo "Leeftijd moet een getal zijn: $0 install 23" >&2; exit 1 ;;
+    esac
+    "$PYTHON" -c "import sys; sys.path.insert(0,'$HERE'); import whoop_config;
+whoop_config.bewaar(age=int('$2'))" || exit 1
+  fi
+  if [ -z "$("$PYTHON" -c "import sys; sys.path.insert(0,'$HERE'); import whoop_config;
+h=whoop_config.hrmax(); print('' if h is None else int(h))")" ]; then
+    echo "Nog geen leeftijd of maximale hartslag bekend." >&2
+    echo "Zet die in de app, of geef hem hier mee:  $0 install 23" >&2
+    exit 1
+  fi
 
   # macOS beschermt ~/Desktop, ~/Documents en ~/Downloads. launchd heeft die
   # toestemming niet, dus daar afgebroken met "Operation not permitted" voordat
@@ -94,13 +107,13 @@ install)
 PLISTEOF
   launchctl unload "$PLIST" 2>/dev/null
   launchctl load "$PLIST" || { echo "launchctl load mislukte"; exit 1; }
-  echo "Aan. Elk uur een poging, met --age $LEEFTIJD."
+  echo "Aan. Elk uur een poging."
   if [ "${KOPIE:-0}" = 1 ]; then
     echo
     echo "Let op: je checkout staat in een map die macOS afschermt voor"
     echo "achtergrondtaken, dus de uursync draait vanaf een kopie in"
     echo "  $DOEL"
-    echo "Na een 'git pull' dus opnieuw:  $0 install $LEEFTIJD"
+    echo "Na een 'git pull' dus opnieuw:  $0 install"
   fi
   echo "Kijken hoe het gaat:  $0 log"
   exit 0 ;;
@@ -127,11 +140,12 @@ esac
 RONDES="${RONDES:-12}"
 VOORGROND="${VOORGROND:-0}"
 
-# shellcheck source=/dev/null
-[ -f "$CONF" ] && . "$CONF"
-LEEFTIJD="${LEEFTIJD:-}"
-if [ -z "$LEEFTIJD" ]; then
-  log "geen leeftijd ingesteld - draai eerst: $0 install <leeftijd>"
+# Leeftijd en bandadres leest whoop_update zelf uit config.json. Alleen
+# controleren of er iets ingevuld staat, want anders draait hij twaalf rondes
+# om daarna te zeggen dat hij niet weet wat je maximale hartslag is.
+if [ -z "$("$PYTHON" -c "import sys; sys.path.insert(0,'$HERE'); import whoop_config;
+print('ja' if whoop_config.volledig() else '')" 2>/dev/null)" ]; then
+  log "instellingen nog niet compleet (band of leeftijd) - zet die in de app"
   exit 1
 fi
 
@@ -180,14 +194,14 @@ if [ "$VOORGROND" = 1 ]; then
   # ook voor de scripts die whoop_update zelf start.
   PYTHONUNBUFFERED=1 \
   uv run --no-project --with bleak python -u "$HERE/whoop_update.py" \
-          --age "$LEEFTIJD" --drain --quick --save-daily --rondes "$RONDES" 2>&1 \
+          --drain --quick --save-daily --rondes "$RONDES" 2>&1 \
     | tee "$UITBESTAND"
   CODE=${PIPESTATUS[0]}
   UIT=$(cat "$UITBESTAND" 2>/dev/null); rm -f "$UITBESTAND"
 else
 set -m                                   # eigen procesgroep, zodat we alle
 uv run --no-project --with bleak python "$HERE/whoop_update.py" \
-        --age "$LEEFTIJD" --drain --quick --save-daily --rondes "$RONDES" \
+        --drain --quick --save-daily --rondes "$RONDES" \
         > "$UITBESTAND" 2>&1 &
 KIND=$!
 set +m                                   # kinderen in een keer kunnen stoppen

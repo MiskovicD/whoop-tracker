@@ -24,14 +24,17 @@ from research_playground import WhoopClient, Cmd, REVISION_1, PacketType, \
                                 HR_SERVICE_UUID, HR_MEASUREMENT_UUID
 from bleak import BleakClient, BleakScanner
 
-STATE = os.path.expanduser("~/.whoop-tracker/alarm.json")
+import whoop_config
+
+# Adres, leeftijd en slaapdoel staan in ~/.whoop-tracker/config.json, niet
+# langer verspreid over alarm.json en auto.conf.
 BATTERY_UUID = "00002a19-0000-1000-8000-00805f9b34fb"   # standaard Battery Level
 DEVINFO_UUID = "00002a29-0000-1000-8000-00805f9b34fb"   # fabrikantnaam
 
 
 def lees_adres():
     try:
-        return json.load(open(STATE)).get("address")
+        return whoop_config.adres()
     except Exception:
         return None
 

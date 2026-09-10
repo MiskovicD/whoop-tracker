@@ -25,78 +25,66 @@ bestaat niet in de data.
 
 ## Wat je nodig hebt
 
-- Een **Whoop 4.0** (5.0 werkt niet met deze scripts)
+- Een **Whoop 4.0** (5.0 spreekt een ander protocol en werkt niet)
 - Een Mac met Bluetooth
 - [`uv`](https://docs.astral.sh/uv/) — `curl -LsSf https://astral.sh/uv/install.sh | sh`
-- Geen Whoop-abonnement en geen Whoop-account (een account voor déze app
-  maak je zo aan, zie *De app op je telefoon*)
+- Geen Whoop-abonnement en geen Whoop-account
 
 ## Opzetten
 
-**1. De protocol-client van OpenStrap** (niet van ons, MIT-licentie):
+Twee commando's, daarna wijst het programma je de weg.
 
 ```bash
-git clone https://github.com/OpenStrap/research.git ~/whoop-research
+git clone https://github.com/MiskovicD/whoop-tracker.git ~/whoop-tracker
+cd ~/whoop-tracker && ./installeer.sh
 ```
 
-Alle scripts hier verwachten hem op precies dat pad. Zet je hem ergens anders
-neer, geef dat dan mee met `WHOOP_RESEARCH=/pad/naar/research`.
+`installeer.sh` controleert je gereedschap, haalt de band-client van OpenStrap
+op, bouwt **Whoop.app** in `~/Applications` en opent hem. Ontbreekt er iets,
+dan zegt hij precies wat en stopt hij; hij installeert nooit iets buiten je
+weten om.
 
-> **Niet op je Desktop.** macOS beschermt `~/Desktop`, `~/Documents` en
-> `~/Downloads` tegen processen zonder toestemming. Een achtergrondtaak breekt
-> daar af op `Operation not permitted` — zonder foutmelding die je ziet, want
-> hij komt niet eens tot het uitvoeren van het script.
+> **Niet in `~/Desktop`, `~/Documents` of `~/Downloads` zetten.** macOS
+> schermt die mappen af voor programma's zonder ondertekening. De app start
+> dan, kan zijn eigen bestanden niet lezen en sluit meteen weer - van buiten
+> niet te onderscheiden van "hij doet niets". Het installatiescript weigert
+> daarom in die mappen.
 
-**2. Deze repo:**
+### In het venster
+
+Drie stappen, eenmalig:
+
+1. **Je account** - maak er een aan, of log in. Hiermee komen je metingen in de
+   telefoon-app, en alleen jij ziet je eigen gegevens.
+2. **Je band** - doe hem van je pols en tik twee keer op het scherm, dan is hij
+   vindbaar. *Zoek mijn band* laat zien wat er in de buurt is; je kiest de jouwe.
+3. **Jij** - je leeftijd, of je gemeten maximale hartslag als je die kent. Dat
+   bepaalt je belastingscore. Zonder dit getal weigeren de scores een waarde,
+   want dan zijn ze verzonnen.
+
+Daarna is **Leegtrekken** één klik. Zet in de instellingen de uursync aan, dan
+hoef je er helemaal niet meer aan te denken: je Mac probeert het elk uur, en
+mislukt stil als je band buiten bereik is.
+
+## Zonder het venster
+
+Alles kan ook vanaf de opdrachtregel. Je instellingen komen uit hetzelfde
+bestand, dus je hoeft je leeftijd niet mee te geven.
 
 ```bash
-git clone https://github.com/MiskovicD/whoop-tracker.git
-cd whoop-tracker
+uv run --no-project --with bleak python whoop_update.py --drain --quick --save-daily
 ```
 
-**3. Zet je band aan de lader** tot hij weer knippert. Ligt hij al maanden stil,
-dan is de accu leeg en werkt niets.
-
-**4. Zoek je band:**
+Of alleen leegtrekken, doorrekenen, of versturen:
 
 ```bash
-cd ~/whoop-research
-uv run --no-project --with bleak python research_playground.py scan
+./whoop_auto.sh inhalen        # lange inhaalslag, met vergrendeling en bewaker
+python3 whoop_report.py        # rapport in je browser
+python3 whoop_config.py        # laat je instellingen zien
 ```
 
-Je zoekt een regel als `found WHOOP <naam> @ <UUID>`. Dat UUID heb je zo nodig.
-
-> **Ziet hij niets en zegt hij "Bluetooth device is turned off" terwijl Bluetooth
-> aan staat?** Dan is het de macOS-privacyinstelling, niet je Bluetooth. Zet
-> Terminal aan onder Systeeminstellingen → Privacy en beveiliging → Bluetooth.
-
-**5. Controleer de verbinding:**
-
-```bash
-uv run --no-project --with bleak python research_playground.py --address <UUID> info
-```
-
-Krijg je `GET_HELLO_HARVARD` met een batterijpercentage terug, dan staat alles open.
-
-## Dagelijks gebruik
-
-Eén commando doet alles: back-up, leegtrekken, doorrekenen, en versturen naar de app.
-
-```bash
-uv run --no-project --with bleak python whoop_update.py --age 23 --drain --quick --save-daily
-```
-
-Vervang `--age` door je eigen leeftijd (dat bepaalt je geschatte maximale
-hartslag). Ken je je gemeten maximum, gebruik dan `--hrmax 191` — dat is altijd
-nauwkeuriger dan een formule.
-
-Zonder Supabase erachter werkt alles behalve de laatste stap. Voor een rapport
-in je browser:
-
-```bash
-python3 whoop_report.py ~/whoop-research/whoop.db
-open ~/whoop-research/whoop_report.html
-```
+Je instellingen staan in `~/.whoop-tracker/config.json`. Alles in die map is
+jouw staat en blijft; alles buiten die map is code en mag weg.
 
 ## Twee dingen die je moet weten
 
@@ -126,6 +114,10 @@ https://miskovicd.github.io/whoop-tracker/app/
 
 Deelknop → *Zet op beginscherm*.
 
+Onderaan staat **Slaapdoel**: daar zet je op hoeveel slaap je mikt. De
+slaapring vergelijkt met dat getal, en het staat per persoon los - hiervoor
+was het voor iedereen acht uur.
+
 De eerste keer krijg je een inlogscherm. Tik op **Account maken**, vul een
 e-mailadres en wachtwoord in, en je bent binnen — er komt geen bevestigingsmail
 aan te pas. Vergeten? *Wachtwoord vergeten?* stuurt je een herstel-link.
@@ -142,53 +134,6 @@ anders ziet jou. Wil je het toch volledig op jezelf hebben, maak dan een eigen
 gratis Supabase-project aan, draai `supabase-schema.sql` in de SQL Editor en pas
 `SB_URL` en `SB_ANON` aan in `app/index.html` en `whoop_push.py`.
 
-## Met een knop, zonder terminal
-
-```bash
-./maak-app.sh
-```
-
-Dat zet **Whoop.app** in `~/Applications`. Te vinden in Launchpad, te slepen
-naar je Dock. Openen, op *Leegtrekken* klikken, klaar: je ziet hoe ver je
-achterloopt, de accustand van je band, en de rondes komen live voorbij.
-
-De app is een dun laagje. De knop start `whoop_auto.sh inhalen`, dus de
-vergrendeling, de bewaker, `caffeinate` en het versturen naar Supabase zitten
-er automatisch in - precies dezelfde weg als de uursync. Loopt die op dat
-moment, dan zegt de knop dat en wacht hij netjes.
-
-Werkt ook zonder de app-bundel:
-
-```bash
-python3 whoop_app.py
-```
-
-> Het is een venster in je browser, geen echt Mac-venster. De Tk die bij
-> Apple's Python zit is te oud voor macOS 15 en valt om met
-> `macOS 15 (1507) or later required`. Een pagina op `localhost` werkt met
-> alleen de standaardbibliotheek, dus zonder installatie. Sluit je het
-> tabblad, dan stopt het programma zichzelf na anderhalve minuut.
-
-Vraagt macOS bij de eerste keer toegang tot je bureaublad, dan komt dat
-doordat de scripts daar staan. Toestaan, of zet de checkout ergens buiten
-`~/Desktop`.
-
-## Elk uur automatisch, zonder eraan te denken
-
-```bash
-./whoop_auto.sh install 23
-```
-
-Vanaf dan probeert je Mac elk uur je band leeg te trekken. Ligt hij buiten
-bereik, dan mislukt die ronde stil en gaat het een uur later opnieuw. Zo loopt
-je achterstand nooit op en hoef je nooit een commando te typen.
-
-| Commando | Wat het doet |
-|---|---|
-| `./whoop_auto.sh install <leeftijd>` | aanzetten (elk uur) |
-| `./whoop_auto.sh log` | laatste regels bekijken |
-| `./whoop_auto.sh uninstall` | weer uitzetten |
-
 ## Bijwerken
 
 De **app** werkt zichzelf bij: de service worker is netwerk-eerst, dus je krijgt
@@ -197,8 +142,13 @@ vanzelf de nieuwste versie.
 De **scripts** niet. Die haal je zelf op:
 
 ```bash
-git pull
+cd ~/whoop-tracker && git pull
 ```
+
+Staat je map buiten `~/Desktop` en dergelijke, dan wijzen de app en de uursync
+rechtstreeks naar je map en ben je meteen bij. Staat hij er wel in, dan draait
+de uursync vanaf een kopie en moet je na een `git pull` opnieuw
+`./whoop_auto.sh install` doen.
 
 Die twee lopen dus uit de pas. Verandert er iets aan het datamodel, dan kan je
 app een veld verwachten dat je oude script nog niet stuurt. Trek na een
@@ -214,6 +164,8 @@ repo, dan bepaal je zelf wanneer je wijzigingen overneemt.
 | `whoop_alarm.py` | wekker uitlezen, zetten, testen, uitzetten |
 | `whoop_hr.py` | GATT-services, betrouwbare accustand, standaard hartslagprofiel |
 | `whoop_insights.py` | correlaties tussen je metingen; `--uitleg` laat Claude ze duiden |
+| `whoop_app.py` | het venster met de knop; `maak-app.sh` bouwt de app-bundel |
+| `whoop_config.py` | je instellingen bekijken; zonder argumenten print hij ze |
 
 `whoop_hr.py services` laat trouwens zien dat je band het **standaard
 Bluetooth-hartslagprofiel** aanbiedt. Elke gewone hartslag-app op je telefoon

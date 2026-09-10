@@ -46,20 +46,21 @@ class LezendeClient(WhoopClient):
             pass
         return super()._on_frame(role, frame)
 
-STATE = os.path.expanduser("~/.whoop-tracker/alarm.json")
+import whoop_config
+
+# Adres, leeftijd en slaapdoel staan in ~/.whoop-tracker/config.json, niet
+# langer verspreid over alarm.json en auto.conf.
 PLAUSIBEL = (1_600_000_000, 1_900_000_000)     # 2020-2030, om een epoch te herkennen
 
 
 def bewaar_adres(addr):
-    d = os.path.dirname(STATE)
-    if not os.path.isdir(d):
-        os.makedirs(d, mode=0o700)
-    json.dump({"address": addr}, open(STATE, "w"))
+    # De map aanmaken doet whoop_config zelf.
+    whoop_config.bewaar(address=addr)
 
 
 def lees_adres():
     try:
-        return json.load(open(STATE)).get("address")
+        return whoop_config.adres()
     except Exception:
         return None
 

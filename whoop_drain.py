@@ -28,15 +28,14 @@ RESEARCH = os.environ.get("WHOOP_RESEARCH") or os.path.expanduser("~/whoop-resea
 # waardoor een automatische sync stilzwijgend afbreekt op "Operation not permitted".
 PLAYGROUND = os.path.join(RESEARCH, "research_playground.py")
 DB = os.path.join(RESEARCH, "whoop.db")
-STATE = os.path.expanduser("~/.whoop-tracker/alarm.json")
+import whoop_config
+
+# Adres, leeftijd en slaapdoel staan in ~/.whoop-tracker/config.json, niet
+# langer verspreid over alarm.json en auto.conf.
 
 
 def adres():
-    try:
-        import json
-        return json.load(open(STATE)).get("address")
-    except Exception:
-        return None
+    return whoop_config.adres()
 
 
 def stand():
