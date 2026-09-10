@@ -135,6 +135,14 @@ def main():
     duw += ["--hrmax", str(a.hrmax)] if a.hrmax else ["--age", str(a.age)]
     if accu is not None:
         duw += ["--battery", str(accu)]
+    # Zonder --all stuurt whoop_push alleen de laatste dag. Een ronde die een
+    # achterstand van dagen wegwerkt, liet de dagen ertussen dan ongemoeid:
+    # 2 en 8 september ontbraken zo maandenlang in de app zonder foutmelding.
+    # Een week terug is ruim genoeg voor elke inhaalslag, en kost bijna niets
+    # extra omdat het inlezen van whoop.db toch al het zware werk is. Grotere
+    # gaten vul je met de hand: whoop_push.py --all --since JJJJ-MM-DD
+    vanaf = dt.date.today() - dt.timedelta(days=7)
+    duw += ["--all", "--since", vanaf.isoformat()]
 
     n += 1
     stap(n, "Naar Supabase sturen")
