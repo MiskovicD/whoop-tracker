@@ -12,6 +12,8 @@ je wachtwoord wordt nergens opgeslagen.
     python3 whoop_push.py --age 23 --dry-run    # laten zien, niets versturen
 """
 import argparse, getpass, json, os, re, ssl, stat, sys, urllib.error, urllib.request
+
+import whoop_config
 from datetime import datetime, timezone, date, timedelta, time as dt_time
 from datetime import datetime as dt_datetime
 
@@ -315,12 +317,12 @@ def main():
                    help="accustand uit 0x2A19; overschrijft de onbetrouwbare hello-waarde")
     a = p.parse_args()
 
-    if a.hrmax:
-        hrmax = a.hrmax
-    elif a.age:
-        hrmax = 211.0 - 0.64 * a.age
-    else:
-        sys.exit("geef --age of --hrmax mee")
+    # Niets meegegeven? Dan uit je instellingen, net als de andere scripts.
+    # Dit was het laatste script dat de vlag nog eiste.
+    hrmax = a.hrmax or (211.0 - 0.64 * a.age if a.age else whoop_config.hrmax())
+    if not hrmax:
+        sys.exit("Geen leeftijd of maximale hartslag bekend.\n"
+                 "Zet die eenmalig in de app (Whoop.app), of geef --age mee.")
 
     if not os.path.exists(a.db):
         sys.exit("whoop.db niet gevonden: %s" % a.db)
