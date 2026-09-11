@@ -48,7 +48,19 @@ weten om.
 > schermt die mappen af voor programma's zonder ondertekening. De app start
 > dan, kan zijn eigen bestanden niet lezen en sluit meteen weer - van buiten
 > niet te onderscheiden van "hij doet niets". Het installatiescript weigert
-> daarom in die mappen.
+> daarom in die mappen en zegt hoe je het oplost.
+
+Geen git? Dan kan het ook met de knop **Code → Download ZIP** op GitHub. Die
+landt in `~/Downloads`, en dat is precies zo'n afgeschermde map, dus verplaats
+hem eerst:
+
+```bash
+mv ~/Downloads/whoop-tracker-main ~/whoop-tracker
+cd ~/whoop-tracker && ./installeer.sh
+```
+
+Nadeel van de ZIP: bijwerken gaat dan niet met `git pull`, maar door opnieuw te
+downloaden.
 
 ### In het venster
 

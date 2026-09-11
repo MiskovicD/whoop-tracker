@@ -19,7 +19,14 @@ case "$HERE/" in
     fout "Deze map is door macOS afgeschermd:
   $HERE
 
-Zet de map ergens anders neer en draai dit opnieuw:
+Programma's zonder ondertekening mogen hier hun eigen bestanden niet lezen.
+De app zou starten en meteen weer sluiten, zonder uitleg.
+
+Verplaats de map naar je thuismap en draai het daar opnieuw:
+  mv \"$HERE\" ~/whoop-tracker
+  cd ~/whoop-tracker && ./installeer.sh
+
+Of haal hem rechtstreeks op de goede plek binnen:
   git clone https://github.com/MiskovicD/whoop-tracker.git ~/whoop-tracker
   cd ~/whoop-tracker && ./installeer.sh" ;;
 esac

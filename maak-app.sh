@@ -22,9 +22,9 @@ case "$HERE/" in
     echo "Een app die hier vandaan start kan zijn eigen bestanden niet lezen" >&2
     echo "(Errno 1, Operation not permitted) en sluit meteen weer." >&2
     echo >&2
-    echo "Zet de checkout ergens buiten die mappen, bijvoorbeeld:" >&2
-    echo "  git clone https://github.com/MiskovicD/whoop-tracker.git ~/whoop-tracker" >&2
-    echo "en draai dit script daar opnieuw." >&2
+    echo "Verplaats de map naar je thuismap en draai het daar opnieuw:" >&2
+    echo "  mv \"$HERE\" ~/whoop-tracker" >&2
+    echo "  cd ~/whoop-tracker && ./maak-app.sh" >&2
     exit 1 ;;
 esac
 PY="$(command -v python3 || echo /usr/bin/python3)"
