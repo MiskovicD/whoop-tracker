@@ -107,9 +107,26 @@ def bewaar_sessie(d):
 def sessie():
     try:
         with open(SESSIE) as f:
-            return json.load(f)
+            s = json.load(f)
     except (OSError, ValueError):
         return None
+    # Sessies van voor deze versie hebben geen e-mail opgeslagen. Zonder dat
+    # kan het instellingenpaneel niet zeggen onder welk account je kijkt, en
+    # dat is juist de enige verklaring die klopt als je Mac wel pusht maar de
+    # telefoon-app leeg blijft.
+    if s.get("email") or not s.get("refresh_token"):
+        return s
+    # Via de refresh-token, niet via /auth/v1/user met het access-token: dat
+    # verloopt na een uur, dus bij een sessie van gisteren mislukt dat altijd.
+    # Een verversing geeft het e-mailadres meteen mee.
+    try:
+        d = _sb("/auth/v1/token?grant_type=refresh_token",
+                {"refresh_token": s["refresh_token"]})
+        if d.get("access_token"):
+            s = bewaar_sessie(d)
+    except Exception:
+        pass                    # niet kunnen ophalen mag niets blokkeren
+    return s
 
 
 def aanmelden(email, wachtwoord, nieuw=False):
@@ -272,18 +289,36 @@ class Scan:
                  PLAYGROUND, "scan"],
                 cwd=RESEARCH, capture_output=True, text=True, timeout=SCAN_MAX,
                 env=dict(os.environ, PYTHONUNBUFFERED="1"))
-            uit = (r.stdout or "") + (r.stderr or "")
+            uit = ((r.stdout or "") + (r.stderr or "")).strip()
             # De client print regels als:  found WHOOP MISHA @ <uuid>
             for naam, adr in re.findall(r"found (.+?) @ (\S+)", uit):
                 naam = naam.strip()
                 self.gevonden.append({"naam": naam, "address": adr,
                                       "whoop": "whoop" in naam.lower()})
-            if not self.gevonden:
-                self.fout = ("Geen band gevonden. Doe hem van je pols, tik twee keer "
-                             "op het scherm om hem vindbaar te maken, en probeer opnieuw."
-                             if "No WHOOP found" in uit else
-                             "Niets gevonden. Staat Bluetooth aan en heeft dit programma "
-                             "er toestemming voor?")
+            if self.gevonden:
+                pass
+            elif "No WHOOP found" in uit or "Scanning" in uit:
+                # Hij heeft echt gezocht en niets gezien. Een band die al met
+                # iets verbonden is adverteert niet, dus dit is meestal geen
+                # storing maar een band die niet in koppelstand staat.
+                self.fout = ("Gezocht, maar geen band gezien. Doe hem van je pols en "
+                             "tik twee keer op het scherm; dan maakt hij zich even "
+                             "vindbaar. Een band die al verbonden is, met je Mac of je "
+                             "telefoon, laat zich niet vinden.")
+            elif not uit:
+                # Geen enkele regel, ook geen foutregel: de client is afgebroken
+                # voordat hij kon zoeken. Dat is vrijwel altijd de Bluetooth-
+                # toestemming van macOS, die bij een ongesigneerd programma
+                # geweigerd wordt zonder dat er iets gevraagd wordt.
+                self.fout = ("De scan brak meteen af, zonder ook maar te zoeken. "
+                             "Dat is vrijwel altijd de Bluetooth-toestemming: kijk bij "
+                             "Systeeminstellingen \u2192 Privacy en beveiliging \u2192 "
+                             "Bluetooth of Whoop daar aan staat. Lukt dat niet, dan werkt "
+                             "leegtrekken wel via de uursync of de terminal.")
+            else:
+                # Wél uitvoer, maar niets bruikbaars: laat zien wat hij zei in
+                # plaats van er een verklaring bij te verzinnen.
+                self.fout = "De scan gaf geen band terug. Dit zei hij:\n" + uit[-400:]
         except subprocess.TimeoutExpired:
             self.fout = "De scan liep vast na %d seconden." % SCAN_MAX
         except OSError as e:
@@ -349,7 +384,7 @@ button.stil{background:var(--kaart2);color:var(--ink);border:1px solid var(--lij
 button.stop{background:var(--rood);color:#fff}
 button:disabled{background:#2a2d33;color:var(--grijs);cursor:default}
 button.groot{padding:15px;font-size:15px}
-.fout{color:var(--rood);font-size:12.5px;min-height:17px;margin:4px 0 0}
+.fout{color:var(--rood);font-size:12.5px;min-height:17px;margin:4px 0 0;white-space:pre-wrap}
 .fout.ok{color:var(--groen)}
 .hint{color:var(--grijs);font-size:12.5px;text-align:center;margin:9px 0 16px;min-height:34px}
 pre{background:var(--kaart);border:1px solid var(--lijn);border-radius:14px;margin:0;
@@ -745,9 +780,17 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def vrije_poort(voorkeur=8152):
+    """Vaste poort als het kan, anders een willekeurige.
+
+    SO_REUSEADDR is nodig omdat een net afgesloten server de poort nog even in
+    TIME_WAIT houdt. Zonder deze vlag denkt de test dat de poort bezet is -
+    terwijl de server hem (die de vlag zelf wel zet) prima kan gebruiken. Je
+    kreeg dan bij elke herstart een ander poortnummer.
+    """
     for p in (voorkeur, 0):
         try:
             s = socket.socket()
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.bind(("127.0.0.1", p))
             poort = s.getsockname()[1]
             s.close()
