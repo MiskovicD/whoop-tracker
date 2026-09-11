@@ -39,7 +39,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <dict>
   <key>CFBundleName</key>            <string>Whoop</string>
   <key>CFBundleDisplayName</key>     <string>Whoop</string>
-  <key>CFBundleIdentifier</key>      <string>nl.misha.whoop</string>
+  <key>CFBundleIdentifier</key>      <string>nl.whooptracker.app</string>
   <key>CFBundleVersion</key>         <string>1.0</string>
   <key>CFBundleShortVersionString</key> <string>1.0</string>
   <key>CFBundlePackageType</key>     <string>APPL</string>
