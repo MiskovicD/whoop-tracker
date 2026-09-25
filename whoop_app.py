@@ -344,6 +344,12 @@ def setup_stand():
                 "age": cfg.get("age"), "hrmax": cfg.get("hrmax"),
                 "sleep_target": cfg.get("sleep_target"),
                 "hrmax_berekend": whoop_config.hrmax(cfg)},
+        # Los van "jij": zonder deze vier werkt alles behalve de
+        # VO2max-schatting, dus ze mogen de wizard niet blokkeren.
+        "vo2max": {"klaar": all(cfg.get(k) for k in
+                                ("sex", "weight_kg", "height_cm", "par")),
+                   "sex": cfg.get("sex"), "weight_kg": cfg.get("weight_kg"),
+                   "height_cm": cfg.get("height_cm"), "par": cfg.get("par")},
         "uursync": {"aan": uursync_aan()},
         "compleet": bool(s) and whoop_config.volledig(cfg),
     }
@@ -458,6 +464,39 @@ pre{background:var(--kaart);border:1px solid var(--lijn);border-radius:14px;marg
     <button id="bJij">Opslaan</button>
     <p class="fout" id="fJij"></p>
   </div>
+
+  <div class="kaart">
+    <h2 id="kVo2"><span class="nr">4</span> VO2max <span style="color:var(--grijs);
+      font-weight:400;font-size:11.5px">&mdash; mag je overslaan</span></h2>
+    <p class="uitleg">Alleen nodig voor de VO2max-schatting. Sla je dit over, dan
+      werkt al het andere gewoon en blijft die ene tegel op streepjes staan.</p>
+    <div class="rij">
+      <div><select id="sex">
+        <option value="">man of vrouw</option>
+        <option value="m">man</option>
+        <option value="v">vrouw</option>
+      </select></div>
+      <div><input id="gewicht" type="number" min="30" max="250" step="0.5" placeholder="gewicht in kg"></div>
+      <div><input id="lengte" type="number" min="120" max="230" placeholder="lengte in cm"></div>
+    </div>
+    <select id="par">
+      <option value="">hoeveel beweeg je per week?</option>
+      <option value="7">meer dan 3 uur, of meer dan 16 km hardlopen</option>
+      <option value="6">1 tot 3 uur, of 8 tot 16 km</option>
+      <option value="5">30 tot 60 minuten</option>
+      <option value="4">minder dan een half uur</option>
+      <option value="3">wel actief, maar niet sportend</option>
+      <option value="2">10 tot 60 minuten activiteit per week</option>
+      <option value="1">wandelen voor het plezier, trap nemen</option>
+      <option value="0">vermijd lopen en inspanning</option>
+    </select>
+    <p class="uitleg" style="margin:0 0 10px">Dit is bewust een eigen inschatting
+      en geen meting: de formule is op deze schaal geijkt. Zou ik hem uit je
+      hartslagdata halen, dan bepaalt mijn drempelkeuze de uitkomst meer dan je
+      lichaam &mdash; gemeten verschil 7,7, terwijl de formule zelf 5,0 marge heeft.</p>
+    <button id="bVo2">Opslaan</button>
+    <p class="fout" id="fVo2"></p>
+  </div>
 </div>
 
 <div id="normaal" hidden>
@@ -479,12 +518,17 @@ pre{background:var(--kaart);border:1px solid var(--lijn);border-radius:14px;marg
       <button class="stil" id="bBandOpnieuw">Wijzigen</button></div>
     <div class="schakel"><span id="instJij"></span>
       <button class="stil" id="bJijOpnieuw">Wijzigen</button></div>
+    <div class="schakel"><span id="instVo2"></span>
+      <button class="stil" id="bVo2Opnieuw">Wijzigen</button></div>
     <p class="fout" id="fInst"></p>
   </div>
 </div>
 </div><script>
 const $ = s => document.querySelector(s);
 let bezig = false, n = 0, opzet = null, scanTimer = null;
+// Wijzig je iets dat de wizard niet blokkeert (VO2max), dan moet die toch
+// tevoorschijn komen - anders wis je een veld en kun je het niet invullen.
+let dwingWizard = false;
 
 const post = async (pad, lijf) => (await fetch(pad, {method:"POST",
   headers:{"Content-Type":"application/json"}, body: JSON.stringify(lijf || {})})).json();
@@ -513,13 +557,22 @@ async function haalOpzet(){
   if(document.activeElement !== $("#hrmax")) $("#hrmax").value = j.hrmax || "";
   if(document.activeElement !== $("#slaap")) $("#slaap").value = j.sleep_target || "";
 
-  $("#setup").hidden = opzet.compleet;
+  const w = opzet.vo2max || {};
+  $("#kVo2").classList.toggle("klaar", !!w.klaar);
+  const vul = (sel, v) => { if(document.activeElement !== $(sel) && v != null) $(sel).value = v; };
+  vul("#sex", w.sex); vul("#gewicht", w.weight_kg);
+  vul("#lengte", w.height_cm); vul("#par", w.par);
+
+  $("#setup").hidden = opzet.compleet && !dwingWizard;
   $("#normaal").hidden = !opzet.compleet;
 
   $("#bUursync").textContent = opzet.uursync.aan ? "AAN" : "UIT";
   $("#bUursync").style.color = opzet.uursync.aan ? "var(--groen)" : "";
   $("#instAccount").textContent = a.email || "ingelogd";
   $("#instBand").textContent = (b.naam || "band") + " " + (b.address || "");
+  $("#instVo2").textContent = w.klaar
+    ? ("VO2max: " + w.weight_kg + " kg, " + w.height_cm + " cm, score " + w.par)
+    : "VO2max: nog niet ingevuld";
   $("#instJij").textContent = j.hrmax ? ("HRmax " + j.hrmax + " (gemeten)")
     : (j.age ? (j.age + " jaar \\u2192 HRmax " + Math.round(j.hrmax_berekend)) : "onbekend");
 }
@@ -538,6 +591,10 @@ $("#bAfmelden").onclick = $("#bAfmelden2").onclick =
 
 $("#bAnders").onclick = $("#bBandOpnieuw").onclick = async () => {
   await post("/instellingen", {address:null, band_naam:null});
+  $("#instellingen").hidden = true; haalOpzet();
+};
+$("#bVo2Opnieuw").onclick = async () => {
+  dwingWizard = true;
   $("#instellingen").hidden = true; haalOpzet();
 };
 $("#bJijOpnieuw").onclick = async () => {
@@ -568,6 +625,19 @@ $("#bScan").onclick = async () => {
   }, 1200);
 };
 function klaarMetScannen(){ $("#bScan").disabled = false; $("#bScan").textContent = "Zoek mijn band"; }
+
+$("#bVo2").onclick = async () => {
+  const lijf = {};
+  if($("#sex").value) lijf.sex = $("#sex").value;
+  if($("#gewicht").value) lijf.weight_kg = $("#gewicht").value;
+  if($("#lengte").value) lijf.height_cm = $("#lengte").value;
+  if($("#par").value !== "") lijf.par = $("#par").value;
+  if(!Object.keys(lijf).length) return zeg("#fVo2", "Vul iets in, of sla over");
+  const d = await post("/instellingen", lijf);
+  zeg("#fVo2", d.ok ? "Opgeslagen" : d.fout, d.ok);
+  if(d.ok) dwingWizard = false;
+  haalOpzet();
+};
 
 $("#bJij").onclick = async () => {
   const lijf = {sleep_target: $("#slaap").value || 480};
@@ -744,8 +814,11 @@ class Handler(BaseHTTPRequestHandler):
             if "address" in d:
                 velden["address"] = d["address"] or None
                 velden["band_naam"] = d.get("band_naam") or None
+            if "sex" in d:
+                velden["sex"] = d["sex"] if d["sex"] in ("m", "v") else None
             for naam, omzet in (("age", int), ("hrmax", float),
-                                ("sleep_target", int)):
+                                ("sleep_target", int), ("weight_kg", float),
+                                ("height_cm", float), ("par", int)):
                 if naam in d:
                     try:
                         velden[naam] = omzet(d[naam]) if d[naam] not in (None, "") else None

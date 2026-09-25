@@ -225,7 +225,7 @@ def dag_stress(data, dag, hrmax):
 
 
 def build_row(day, recs, user_id, hrmax, sex, trimp_ref, baseline,
-              data_hello=None, battery=None, nacht=None, stress=None):
+              data_hello=None, battery=None, nacht=None, stress=None, vo2=None):
     sr = series(recs)
     hr = sr["hr"]
     if not hr:
@@ -269,6 +269,7 @@ def build_row(day, recs, user_id, hrmax, sex, trimp_ref, baseline,
         "hr_curve": curve(hr),
         "zones": {("Z%d" % (i + 1)): int(s) for i, s in zones.items()},
         **({"stress_rmssd": round(stress, 1)} if stress else {}),
+        **({"vo2max": round(vo2, 1)} if vo2 is not None else {}),
     }
     if h:
         row.update({"hrv_rmssd": round(h["rmssd"], 1), "hrv_sdnn": round(h["sdnn"], 1),
@@ -340,6 +341,13 @@ def main():
         for d in overgeslagen:
             print("  %s  overgeslagen (voor %s)" % (d, a.since))
     baseline = M.load_baseline()
+    # VO2max is een schatting uit vaste gegevens plus je rustwaarde uit de
+    # baseline, dus één keer berekenen voor alle dagen. Ontbreekt er iets, dan
+    # blijft de kolom leeg in plaats van een verzonnen getal te krijgen.
+    _cfg = whoop_config.laad()
+    vo2 = M.vo2max(_cfg.get("age"), _cfg.get("sex"), _cfg.get("weight_kg"),
+                   _cfg.get("height_cm"), _cfg.get("par"), hrmax,
+                   M.rhr_rust(baseline))["jackson"]
 
     s = None if a.dry_run else session()
     uid = "00000000-0000-0000-0000-000000000000" if a.dry_run else s["user_id"]
@@ -350,7 +358,8 @@ def main():
                         data.get("hello"),
                         battery=a.battery if d == max(days) else None,
                         nacht=nacht_venster(data["records"], d),
-                        stress=dag_stress(data, d, hrmax))
+                        stress=dag_stress(data, d, hrmax),
+                        vo2=vo2)
         if row is None:
             print("  %s  overgeslagen (geen hartslag)" % d)
             continue

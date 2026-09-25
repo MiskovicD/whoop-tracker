@@ -468,6 +468,19 @@ function render(){
                     x => { const p = (x - basis) / basis * 100;
                            return (p > 0 ? "+" : "") + p.toFixed(1) + "%"; });
       })()}
+      ${(() => {
+        // VO2max is een schatting, geen meting: Whoop leidt die af uit een
+        // hardloopsessie met gps (tempo tegen hartslag) en dat meet de band
+        // niet. Daarom geen normaalbereik-badge uit je eigen historie - die
+        // zou suggereren dat het een dagmeting is die op en neer gaat.
+        if (d.vo2max == null)
+          return `<div class="tile"><div class="lab">VO2MAX</div>
+            <div class="val">&mdash;</div>
+            <span class="badge off">vul je gegevens in</span></div>`;
+        return `<div class="tile"><div class="lab">VO2MAX</div>
+          <div class="val">${Math.round(d.vo2max)}<small> ml/kg/min</small></div>
+          <span class="badge off">schatting &plusmn;5</span></div>`;
+      })()}
       ${tile("SLAAP", d.sleep_min!=null?(d.sleep_min/60).toFixed(1):null, "u",
              "sleep_min", true, d.sleep_min, x => (x/60).toFixed(1)+" u")}
     </div>`;
@@ -479,6 +492,12 @@ function render(){
       <b style="color:var(--ink)">Ademhaling</b> komt uit je hartslag zelf: die versnelt
       bij inademen en vertraagt bij uitademen, dus de ademhaling zit als golf in je
       R-R-intervallen. Alleen vensters met een duidelijke piek tellen mee.<br><br>
+      <b style="color:var(--ink)">VO2max</b> is een schatting en geen meting. Whoop
+      leidt die af uit een hardloopsessie met gps - tempo tegen hartslag - en dat
+      meet je band niet. Dit getal komt uit de vergelijking van Jackson (1990) op
+      je leeftijd, sekse, BMI en hoeveel je per week beweegt, met een marge van
+      5 ml/kg/min. Het beweegt dus niet per dag mee; het verandert als je gewicht
+      of je hoeveelheid training verandert.<br><br>
       <b style="color:var(--ink)">Stress</b> is je HRV in rust overdag, alleen gemeten
       in vensters waarin je nauwelijks bewoog - anders meet je inspanning. Lager dan
       jouw normaal betekent meer sympathische activatie. Zuurstof staat hier niet meer

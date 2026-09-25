@@ -16,7 +16,8 @@ create table if not exists whoop_days (
   battery         real,                       -- accustand van de band
   resp_rate       real,                       -- ademhaling (nog niet gedecodeerd)
   spo2            real,                       -- zuurstof: niet haalbaar, kolom blijft leeg
-  stress_rmssd    real,                       -- HRV in rust overdag; lager = meer activatie
+  stress_rmssd    real,
+  vo2max          real,                      -- schatting (Jackson 1990), geen meting                       -- HRV in rust overdag; lager = meer activatie
   gevoel          smallint,                   -- eigen ochtendcijfer 1-5
   skin_temp       real,                       -- huidtemperatuur, afwijking t.o.v. baseline
 

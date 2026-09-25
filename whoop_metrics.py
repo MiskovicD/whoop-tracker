@@ -16,6 +16,7 @@ import argparse, json, math, os, statistics, sys, tempfile
 from datetime import datetime, timezone, time as dt_time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import whoop_config
 from whoop_report import (load, sessions, series, rmssd, sdnn,
                           fmt_dur, fmt_t, resting_hr, laatste_met_hr,
                           nacht_venster)
@@ -96,6 +97,20 @@ def vo2max_uth(hrmax, rhr):
     if not hrmax or not rhr:
         return None
     return UTH_FACTOR * hrmax / float(rhr)
+
+
+def rhr_rust(bl, dagen=30):
+    """Laagste rusthartslag uit je baseline: je echte rustwaarde.
+
+    De rusthartslag van een losse sessie is hier ongeschikt. Gemeten op eigen
+    data: een sessie met een dutje erin gaf 58,9 en daarmee een Uth-schatting
+    van 49,9, terwijl dezelfde formule op de baseline 62,9 gaf. De formule deelt
+    rechtstreeks door dit getal, dus een toevallige dag bepaalt anders de
+    uitkomst. Het laagste van de laatste weken is het dichtst bij rust.
+    """
+    waarden = [v["rhr"] for _, v in sorted(bl.get("days", {}).items())[-dagen:]
+               if v.get("rhr")]
+    return min(waarden) if waarden else None
 
 
 def vo2max(cfg_age, sex, weight_kg, height_cm, par, hrmax, rhr):
@@ -798,12 +813,19 @@ def main():
     if not os.path.exists(a.db):
         sys.exit("whoop.db niet gevonden: %s" % a.db)
 
+    # Niets meegegeven? Dan uit je instellingen, net als de andere scripts.
+    _cfg = whoop_config.laad()
+    if not (a.hrmax or a.age):
+        a.hrmax, a.age = _cfg.get("hrmax"), _cfg.get("age")
+        if not a.sex and _cfg.get("sex"):
+            a.sex = _cfg["sex"]
     if a.hrmax:
         hrmax, how = a.hrmax, "opgegeven"
     elif a.age:
         hrmax, how = 211.0 - 0.64 * a.age, "Gellish, %d jaar" % a.age
     else:
-        sys.exit("geef --age of --hrmax mee")
+        sys.exit("Geen leeftijd of maximale hartslag bekend.\n"
+                 "Zet die eenmalig in de app (Whoop.app), of geef --age mee.")
 
     data = load(a.db)
 
@@ -985,6 +1007,33 @@ def main():
             print("   eigen normaal is betekenisloos, dus die geef ik nog niet.")
     else:
         print("   wacht op HRV.")
+
+    print("\n VO2MAX (schatting, geen meting)")
+    cfg = whoop_config.laad()
+    rust = rhr_rust(bl) or rhr
+    v = vo2max(cfg.get("age") or a.age, cfg.get("sex") or a.sex,
+               cfg.get("weight_kg"), cfg.get("height_cm"), cfg.get("par"),
+               hrmax, rust)
+    if v["jackson"] is not None:
+        print("   %.1f ml/kg/min  (bereik %.1f - %.1f)"
+              % (v["jackson"], v["jackson"] - v["see"], v["jackson"] + v["see"]))
+        print("   Jackson 1990, uit leeftijd, sekse, BMI %.1f en activiteitsscore %d"
+              % (v["bmi"], cfg["par"]))
+        out["vo2max"] = round(v["jackson"], 1)
+    else:
+        print("   nog niet te berekenen; vul in de app in: %s"
+              % ", ".join(v["mist"]))
+    if v["uth"] is not None:
+        print("   tweede mening: %.1f volgens de hartslagverhouding (Uth 2004),"
+              % v["uth"])
+        print("   met je laagste rusthartslag van %.1f uit de baseline." % rust)
+        print("   Die methode is op goed getrainde mannen afgeleid en overschat"
+              " bij ongetrainden;")
+        print("   hij hangt ook aan je HRmax, en die is hier zelf een schatting.")
+        out["vo2max_hr"] = round(v["uth"], 1)
+    print("   Whoop's eigen getal komt uit een hardloopsessie met gps (tempo tegen")
+    print("   hartslag). Dat meet je band niet, dus dit is een andere weg naar"
+          " hetzelfde begrip.")
 
     print()
     if a.json:
