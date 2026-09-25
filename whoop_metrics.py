@@ -47,6 +47,71 @@ ZONES = [(0.50, 0.60, 1), (0.60, 0.70, 2), (0.70, 0.80, 3),
          (0.80, 0.90, 4), (0.90, 1.01, 5)]
 
 
+# ------------------------------------------------------------------- VO2max
+
+# Jacksons activiteitsscore, letterlijk zoals gepubliceerd. Hij is bewust
+# zelf-gerapporteerd: de vergelijking is op die schaal geijkt, en een schatting
+# uit hartslagminuten in de plaats zetten verandert de uitkomst meer dan de
+# formule zelf aan onzekerheid heeft. Gemeten op eigen data: drempel 70% van
+# HRmax gaf score 3, drempel 50% gaf score 7 - een verschil van 7,7 ml/kg/min,
+# terwijl de standaardfout van de vergelijking 5,0 is. Daarom vragen we hem.
+PAR_SCHAAL = [
+    (0, "vermijd lopen en inspanning"),
+    (1, "wandelen voor het plezier, trap nemen"),
+    (2, "10 tot 60 minuten activiteit per week"),
+    (3, "meer dan 1 uur activiteit per week"),
+    (4, "hardlopen onder 1,6 km, of 30 min per week"),
+    (5, "hardlopen 1,6 tot 8 km, of 30 tot 60 min per week"),
+    (6, "hardlopen 8 tot 16 km, of 1 tot 3 uur per week"),
+    (7, "hardlopen meer dan 16 km, of meer dan 3 uur per week"),
+]
+
+JACKSON_SEE = 5.0      # standaardfout van de vergelijking, ml/kg/min
+UTH_FACTOR = 15.0      # Uth 2004; beschrijvend gevonden 14,5 (m) en 15,3 (v)
+
+
+def vo2max_jackson(age, bmi, par, sex):
+    """Jackson e.a. 1990, niet-inspanningsvergelijking, ruim 2000 deelnemers.
+
+    VO2max = 56,363 + 1,921*PA-R - 0,381*leeftijd - 0,754*BMI + 10,987*(man)
+
+    Dit is de schatting voor een algemene bevolking, dus de bruikbare voor wie
+    geen wedstrijdatleet is.
+    """
+    if None in (age, bmi, par, sex):
+        return None
+    return (56.363 + 1.921 * par - 0.381 * age - 0.754 * bmi
+            + (10.987 if sex == "m" else 0.0))
+
+
+def vo2max_uth(hrmax, rhr):
+    """Uth e.a. 2004, hartslagverhouding: VO2max = 15,0 * HRmax / HRrust.
+
+    Afgeleid op 46 goed getrainde mannen. Latere validatie vond dat de
+    theoretische factor VO2max **overschat bij ongetrainden** (~2 ml/kg/min te
+    hoog), en bij getrainden wel klopt. Daarom is dit hier een tweede mening en
+    niet de hoofdschatting - zeker omdat onze HRmax zelf vaak een schatting uit
+    je leeftijd is, en de fout daarvan hier recht doorwerkt.
+    """
+    if not hrmax or not rhr:
+        return None
+    return UTH_FACTOR * hrmax / float(rhr)
+
+
+def vo2max(cfg_age, sex, weight_kg, height_cm, par, hrmax, rhr):
+    """Beide schattingen, plus wat je nodig hebt en nog niet hebt ingevuld."""
+    bmi = None
+    if weight_kg and height_cm:
+        bmi = float(weight_kg) / (float(height_cm) / 100.0) ** 2
+    jackson = vo2max_jackson(cfg_age, bmi, par, sex)
+    uth = vo2max_uth(hrmax, rhr)
+    mist = [n for n, v in (("sekse", sex), ("gewicht", weight_kg),
+                           ("lengte", height_cm), ("activiteitsscore", par))
+            if v in (None, "")]
+    return {"jackson": jackson, "uth": uth, "bmi": bmi, "mist": mist,
+            "see": JACKSON_SEE}
+
+
 # ------------------------------------------------------------ hartslagzones
 
 def hr_zones(hr, hrmax):

@@ -28,6 +28,12 @@ STANDAARD = {
     "age": None,            # voor de geschatte maximale hartslag
     "hrmax": None,          # gemeten maximum; gaat voor op age
     "sleep_target": 480,    # minuten; 8 uur
+    # Alleen voor de VO2max-schatting. Zonder deze vier laat die tegel streepjes
+    # zien in plaats van een verzonnen getal.
+    "sex": None,            # "m" of "v"
+    "weight_kg": None,
+    "height_cm": None,
+    "par": None,            # 0-7, activiteitsscore van Jackson; zie whoop_metrics
 }
 
 
