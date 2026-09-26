@@ -211,11 +211,17 @@ set +m                                   # kinderen in een keer kunnen stoppen
   while kill -0 "$KIND" 2>/dev/null; do
     sleep 15; totaal=$((totaal + 15))
     nu=$(stat -f %m "$DB" 2>/dev/null || echo 0)
+    echo "$(date '+%H:%M:%S') stil=$stil totaal=$totaal mtime=$nu" > "$DIR/bewaker.status"
     if [ "$nu" != "$laatst" ]; then laatst=$nu; stil=0; else stil=$((stil + 15)); fi
     if [ "$stil" -ge "$STIL_MAX" ] || [ "$totaal" -ge "$ABSOLUUT_MAX" ]; then
+      # Loggen vóór het ingrijpen. Op 2026-09-26 bleef een ronde 9,5 uur
+      # hangen terwijl deze lus aantoonbaar rondjes draaide; zonder regel in
+      # de log valt achteraf niet na te gaan of hij hier ooit kwam.
+      log "bewaker grijpt in: $stil s geen nieuwe data, $totaal s totaal"
       kill -TERM -"$KIND" 2>/dev/null || kill -TERM "$KIND" 2>/dev/null
       sleep 10
       kill -KILL -"$KIND" 2>/dev/null || kill -KILL "$KIND" 2>/dev/null
+      log "bewaker klaar"
       exit 0
     fi
   done

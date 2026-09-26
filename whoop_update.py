@@ -11,7 +11,7 @@ Eén commando: band uitlezen, doorrekenen, naar Supabase sturen.
 Draait de stappen als losse processen, zodat een mislukte stap de rest niet
 meesleurt - en zodat elke stap dezelfde code gebruikt die je los al draait.
 """
-import argparse, asyncio, datetime as dt, json, os, shutil, subprocess, sys
+import argparse, asyncio, datetime as dt, json, os, shutil, signal, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RESEARCH = os.environ.get("WHOOP_RESEARCH") or os.path.expanduser("~/whoop-research")
@@ -35,9 +35,34 @@ def stap(nr, tekst):
     print("-" * 58)
 
 
-def draai(cmd, cwd=None):
-    r = subprocess.run(cmd, cwd=cwd)
-    return r.returncode == 0
+# Een BLE-aanroep die een slaapstand of een weggevallen verbinding niet
+# overleeft komt nooit terug. De sync-client negeert daarbij zijn eigen
+# --timeout. Gemeten op 2026-09-26: de stap "band aantikken" (info) stond 66
+# minuten te hangen en hield de hele uursync 9,5 uur vast. Vandaar hier een
+# eigen klok om elke stap.
+STAP_TIMEOUT = 300          # seconden; een normale stap duurt seconden
+SYNC_TIMEOUT = 900          # een sync-ronde mag langer, maar niet eindeloos
+
+
+def draai(cmd, cwd=None, timeout=STAP_TIMEOUT):
+    """Start in een eigen sessie, zodat we ook de kinderen kunnen stoppen."""
+    kind = subprocess.Popen(cmd, cwd=cwd, start_new_session=True)
+    try:
+        kind.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        print("  afgebroken na %d min: deze stap kwam niet terug" % (timeout // 60))
+        for sein in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(os.getpgid(kind.pid), sein)
+            except OSError:
+                break
+            try:
+                kind.wait(timeout=10)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        return False
+    return kind.returncode == 0
 
 
 async def lees_accu(a):
@@ -107,13 +132,15 @@ def main():
     elif a.sync:
         n += 1
         stap(n, "Historie leegtrekken")
-        if not draai(basis + ["--timeout", "600", "sync"], cwd=RESEARCH):
+        if not draai(basis + ["--timeout", "600", "sync"], cwd=RESEARCH,
+                     timeout=SYNC_TIMEOUT):
             print("  sync gaf een fout - ga toch door met de rest")
 
     if not a.quick:
         n += 1
         stap(n, "Live meten (%ds) - band moet om je pols" % a.duration)
-        if not draai(basis + ["--duration", str(a.duration), "live"], cwd=RESEARCH):
+        if not draai(basis + ["--duration", str(a.duration), "live"], cwd=RESEARCH,
+                     timeout=a.duration + 120):
             print("  meting gaf een fout - ga toch door met de rest")
     else:
         n += 1
